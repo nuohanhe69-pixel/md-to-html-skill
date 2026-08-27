@@ -40,6 +40,7 @@
 | Source Integrity Gate | `31-source-integrity-gate.md` | 02/03/13/20 只编排 / Gate |
 | Semantic Carrier / Responsive Preservation | `32-semantic-carrier-and-responsive-preservation.md` | 07/24/20 只引用 |
 | Lightweight Design Reflection QA | `33-lightweight-design-reflection-qa.md` | 08/14 只编排；Reviewer 不直接修改 |
+| PostGeneration Editor / Delivery Finalizer | `postprocess/references/editor-contract.md` | SKILL.md 只给入口命令与 Delivery Gate；postprocess/README.md 只给执行说明；postprocess/SUBAGENT.md 只给 Worker 契约 |
 
 ## 冲突处理
 

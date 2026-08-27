@@ -343,3 +343,25 @@ Huashu 影响评估：FREE 区（class/style/id/aria-*/自定义视觉语义）�
 判别式沉淀：**改动是补丁还是修复，看它让下一次变更要碰的地方变多还是
 变少**——本变更净效果：新增 1 小模块 + 契约一节，删 4 处硬编码，接口
 演化从"改 4 处"变"改 1 处"。
+
+### §7.2 motion Gate 惯用语→属性重构（2026-08-28 追加，同分支）
+
+对 V2.9 产物（GTM.html）深查发现假阳性：它实现了教科书级渐进增强
+（no-js 默认 + remove 脚本 + 配对兜底规则 + reduced-motion），却被
+旧 motion Gate 判 FAIL——Gate 只认 `motion-ready` 一种字符串标记。
+这推翻了两个此前推断：V2.9 未出隐藏问题**不是运气**（30 号文件 §4
+早有边界规则且被真实履行）；新版动效收敛的部分原因可能是假阳性逼出的
+改写（无法排除）。
+
+根因：Gate 验证惯用语而非属性，等于用代码隐性规定 Huashu 的实现
+词汇——"教 Huashu 做事"不在规则文件里，而藏在 Gate 的正则里。
+
+修复（仅 postprocess 域内，30 号 / HOW 平面零改动）：
+`classify_fallback_idioms()` 改为属性认定（V1 no-js 配对 / V1b 条件化
+隐藏 / V2 无条件可见覆盖 / V3 reduced-motion 四种证明任一即可）；
+修复复合选择器误判 bug（`.b-in.on{opacity:1}` 不构成静态证明）。
+验证矩阵：GTM.html FAIL→PASS，其余正例保持 PASS，真不安全反例保持
+FAIL；基线新增 `motion_gate_idiom_neutral` 断言防回归。
+
+净效果：安全属性不变，实现词汇约束解除——动效表达自由度回归，
+防护强度不降。

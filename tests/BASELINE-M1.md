@@ -103,7 +103,55 @@ Playwright 冒烟在本机降级 SKIPPED（依赖缺失，不阻塞）。富文�
 
 > 教训记录（夹具自洽陷阱）：V2.0 移植时 fixture 用了注入器的私有字典
 > `data-du`，闭环全绿但对真实报告零模块能力且无任何报错——这正是
-> `data-du-id` vs `data-du` 漂移静默发生的机制。哨兵 Gate
+> `data-du-id` vs `data-du` 属性名漂移静默发生的机制。哨兵 Gate
 > `module_capability_present` 即为此类漂移的永久防护；今后夹具必须从
 > 契约（references/24 §13）生成，不从被测代码的假设生成。
+
+## 全链路真实运行审计（2026-08-27 追加，M1 有效性实据）
+
+真实会话（非测试夹具）从 48 DU / 14 表源文档跑完整链，证据来自产物
+目录文件 mtime 与 run-state 留痕还原：
+
+| M1 机制 | 真实运行表现 |
+|---|---|
+| motion 安全 Gate | **命中**：首次 Finalizer 因 `MOTION_RUNTIME_FAILURE_CAN_HIDE_CONTENT` BLOCKED（正是"中间页面大面积隐藏"类问题的自动拦截） |
+| 契约"拒绝修复 base" | **执行**：PostProcess 未清洗 base，退回生成侧 |
+| 生成侧自愈 | 修 motion CSS 后重写 report.html，二跑 Finalizer |
+| M1-3 漂移留痕 | **触发**：二跑检测到旧失败产物 → `rebuild_reason` 记录首次失败原因 → 确定性重建 → PASS → DELIVERED |
+| Artifact Boundary | base 零污染（data-edit-* / data-he-* 全零）；29 `data-du-id` 承载体被正确消费（editable 29 模块、815 元素、38 motion 标注） |
+| WHAT 完整性 | 48/48 obligation 引用全落 report.html；14/14 源表覆盖（T12+T13 视觉合并）；74.32% / 78.44% / 12.93 / 2,170 / BBA60% 等关键一方数据抽查全在 |
+
+跨版本横向观察（GTM.html = V2.9 另一源文档产物，非控制变量 A/B）：
+工艺总量同级（CSS 规则块 375 vs 346），新版响应式更好（4 vs 2
+@media）但动效显著更保守（transition 11 vs 4；keyframes 1 vs 0）。
+动效保守的因果：首次尝试的动效被 motion Gate 拦截，修复后收敛——
+这是安全与炫技的交易，不是 Huashu 表达力受限（B 方向视觉系统完整
+落地）。调节位置在 motion Gate 通过标准，不在拆 Gate。
+
+## motion Gate 惯用语→属性重构（2026-08-28 追加）
+
+**修正上文审计表述**：GTM.html 深查后发现它是教科书级渐进增强实现
+（`<html class="no-js">` 默认携带 + head 内联 remove + `html.no-js
+.b-in{opacity:1}` 兜底 + reduced-motion），却被旧 Gate 判 FAIL——
+旧 Gate 只认 `motion-ready` 一种字符串标记，把 V2.9 的 no-js 惯用语
+当风险信号。"首次产出动效被 Gate 拦截"那条记录**无法排除假阳性**；
+"V2.9 未出隐藏问题是运气"的推测同样被此证据推翻（V2.9 的 30 号
+文件 §4 早有该边界规则，且真实履行）。
+
+根因：**Gate 验证的是惯用语（特定字符串），不是属性（JS 失败时语义
+内容是否可达）**——等于用代码隐性规定 Huashu 的实现词汇，与"不教
+Huashu 做事"原则直接冲突。
+
+重构（仅 postprocess 域内，30 号零改动）：`classify_fallback_idioms()`
+按属性认定安全证明——V1 `html.no-js` 配对兜底 / V1b 隐藏规则本身
+条件化于 JS 状态 / V2 同类无条件可见规则 / V3 reduced-motion；新
+失败码 `HIDDEN_CONTENT_WITHOUT_JS_FAILURE_FALLBACK`（真无兜底）。
+反例开发中发现并修复复合选择器误判 bug（`.b-in.on{opacity:1}` 不
+构成静态证明，`_selector_targets_cls()` 排除）。
+
+验证矩阵：GTM.html（no-js 惯用语）FAIL→**PASS**；新 report.html /
+fixture / editable 保持 PASS；真不安全反例保持 FAIL。基线新增
+`motion_gate_idiom_neutral` 断言（两惯用语 PASS + 反例 FAIL），防
+回归。净效果：安全属性不变，通过路径从 1 条惯用语变 4 种证明方式，
+动效写法自由度解除限制。
 

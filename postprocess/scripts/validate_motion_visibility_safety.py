@@ -4,10 +4,12 @@
 Ported from md-to-html-report-v3.0.1-motion-visibility-safety
 scripts/validate_motion_visibility_safety.py onto the stdlib mini DOM.
 
-This validator intentionally does NOT score design quality. It detects
-high-risk patterns where semantic content can remain invisible because a
-motion runtime never reaches its reveal condition. Run on the base report
-(delivery safety) and on the editable (edit-mode override present).
+This validator intentionally does NOT score design quality. It verifies one
+property: when the motion runtime never runs (JS disabled / failed), semantic
+content remains visible. It does NOT prescribe how that safety is achieved —
+any statically provable fallback idiom passes (V1 no-js paired rules,
+V2 conditional-hidden, V3 reduced-motion, V4 small carriers). Run on the base
+report (delivery safety) and on the editable (edit-mode override present).
 """
 from __future__ import annotations
 import argparse
@@ -29,6 +31,7 @@ IGNORE_CLASSES = {
 }
 STRUCTURAL_TAGS = {'main', 'section'}
 BLOCK_TAGS = {'div', 'article', 'section', 'figure', 'table', 'ul', 'ol', 'header', 'aside'}
+JS_STATE_CLASSES = ('js', 'no-js', 'motion-ready')
 
 
 def css_rules(css: str):
@@ -37,12 +40,15 @@ def css_rules(css: str):
         yield m.group(1).strip(), m.group(2).strip()
 
 
+def _hidden_decl(decl: str) -> bool:
+    return bool(re.search(r'(?:^|;)\s*opacity\s*:\s*0(?:\D|$)', decl, re.I)) or \
+        bool(re.search(r'(?:^|;)\s*visibility\s*:\s*hidden\b', decl, re.I))
+
+
 def hidden_motion_classes(css: str) -> set:
     out = set()
     for sel, decl in css_rules(css):
-        hidden = bool(re.search(r'(?:^|;)\s*opacity\s*:\s*0(?:\D|$)', decl, re.I)) or \
-                 bool(re.search(r'(?:^|;)\s*visibility\s*:\s*hidden\b', decl, re.I))
-        if not hidden:
+        if not _hidden_decl(decl):
             continue
         if not re.search(r'\.(?:js|motion-ready|rv|reveal|b-in|fade|animate|motion)', sel, re.I):
             continue
@@ -64,6 +70,78 @@ def element_is_large_semantic_container(el: Node) -> bool:
     text_len = len(re.sub(r'\s+', ' ', htmldom.get_text(el).strip()))
     du_count = sum(1 for d in htmldom.iter_elements(el) if DU_ATTRIBUTE in d.attrs)
     return text_len > 1800 or du_count >= 3
+
+
+def _fallback_makes_visible(decl: str) -> bool:
+    return bool(re.search(r'opacity\s*:\s*1\b', decl, re.I)) or \
+        bool(re.search(r'visibility\s*:\s*visible\b', decl, re.I))
+
+
+def _selector_targets_cls(sel: str, cls: str) -> bool:
+    """True only when the selector matches the class WITHOUT extra state
+    conditions (`.b-in` or `.b-in .child`), NOT `.b-in.on` / `.b-in:hover`.
+    Compound selectors only apply after runtime state, so they cannot prove
+    static no-JS visibility."""
+    for part in sel.split(','):
+        part = part.strip()
+        m = re.search(rf'\.{re.escape(cls)}(?![\w-])', part)
+        if not m:
+            continue
+        # token immediately after .cls (or end) must not be another state class
+        rest = part[m.end():]
+        nxt = re.match(r'\.([A-Za-z_][\w-]*)', rest)
+        if nxt and nxt.group(1) not in ('on', 'in'):
+            continue  # pseudo/compound we don't understand -> treat as not covering
+        if nxt:
+            # `.cls.on` / `.cls.in` — runtime-state only, never a static proof
+            continue
+        return True
+    return False
+
+
+def classify_fallback_idioms(css: str, html_root: Node, js: str, hidden_classes: set) -> dict:
+    """Property check — which fallback idioms are statically provable.
+
+    A hidden class is SAFE if at least one idiom below covers EVERY rule that
+    hides it. Otherwise the class can hide content with no JS-failure proof.
+    """
+    rules = list(css_rules(css))
+
+    covered = {cls: [] for cls in hidden_classes}
+    uncovered_rules = []
+
+    for sel, decl in rules:
+        for cls in hidden_classes:
+            if not _hidden_decl(decl):
+                continue
+            if not _selector_targets_cls(sel, cls):
+                continue
+            safe = False
+            # V1: paired no-js / reduced-motion fallback — html.no-js .b-in{opacity:1}
+            if any(state in sel for state in ('no-js', 'reduced-motion')) and _fallback_makes_visible(decl):
+                safe = True
+            # V1b: the HIDING rule itself is conditional on JS state classes
+            elif any(st in sel for st in JS_STATE_CLASSES) and any(st in sel for st in ('motion-ready', 'js')):
+                safe = True
+            # V2: an unconditional visible rule for the same class (.rv{opacity:1!important})
+            if not safe:
+                for sel2, decl2 in rules:
+                    if _selector_targets_cls(sel2, cls) and _fallback_makes_visible(decl2) \
+                            and not any(st in sel2 for st in JS_STATE_CLASSES):
+                        safe = True
+                        break
+            if safe:
+                covered[cls].append(sel.strip())
+            else:
+                uncovered_rules.append({'class': cls, 'selector': sel.strip()})
+
+    idioms = {}
+    if any(covered[cls] for cls in covered):
+        idioms['V1_nojs_or_conditional'] = True
+    reduced = re.search(r'@media[^{]*prefers-reduced-motion[^{]*\{.*', css, re.I | re.S)
+    if reduced and any(_fallback_makes_visible(chunk) for chunk in re.findall(r'\{([^{}]*)\}', reduced.group(0))):
+        idioms['V3_reduced_motion'] = True
+    return {'idioms': idioms, 'covered': covered, 'uncovered': uncovered_rules}
 
 
 def main() -> int:
@@ -89,17 +167,19 @@ def main() -> int:
     hidden_classes = hidden_motion_classes(css)
     evidence['hidden_motion_classes'] = sorted(hidden_classes)
 
-    unconditional_hidden = []
-    for sel, decl in css_rules(css):
-        hidden = bool(re.search(r'(?:^|;)\s*opacity\s*:\s*0(?:\D|$)', decl, re.I)) or \
-                 bool(re.search(r'visibility\s*:\s*hidden', decl, re.I))
-        if not hidden:
-            continue
-        for cls in hidden_classes:
-            if re.search(rf'(^|[\s,>+~])\.{re.escape(cls)}(?:[:.#\s,>+~{{]|$)', sel) \
-                    and not re.search(r'\.(?:js|motion-ready|no-js)', sel):
-                unconditional_hidden.append({'class': cls, 'selector': sel.strip()})
-    evidence['unconditional_hidden_motion_rules'] = unconditional_hidden
+    fallback = classify_fallback_idioms(css, root, js, hidden_classes) if hidden_classes \
+        else {'idioms': {}, 'covered': {}, 'uncovered': []}
+    evidence['fallback_idioms'] = fallback['idioms']
+    evidence['uncovered_hidden_rules'] = fallback['uncovered'][:20]
+
+    # The core property: every hidden motion class must be covered by at
+    # least one statically provable fallback idiom.
+    if fallback['uncovered']:
+        failures.append('HIDDEN_CONTENT_WITHOUT_JS_FAILURE_FALLBACK')
+        if len(fallback['idioms']) == 0:
+            failures.append('MOTION_RUNTIME_FAILURE_CAN_HIDE_CONTENT')
+    elif hidden_classes and not fallback['idioms']:
+        failures.append('MOTION_RUNTIME_FAILURE_CAN_HIDE_CONTENT')
 
     risky = []
     for cls in sorted(hidden_classes):
@@ -112,6 +192,9 @@ def main() -> int:
                     'text_chars': len(htmldom.get_text(el).strip()),
                     'descendant_du': sum(1 for d in htmldom.iter_elements(el) if DU_ATTRIBUTE in d.attrs),
                 })
+    # V4: small-carrier exemption — hidden reveal on small units is low risk
+    # when a fallback idiom exists; large structural carriers are held to the
+    # strict property regardless.
     evidence['large_hidden_motion_carriers'] = risky[:50]
     if risky:
         failures.append('LARGE_STRUCTURAL_HIDDEN_REVEAL')
@@ -126,23 +209,10 @@ def main() -> int:
     if risky and any(t >= 0.10 for t in thresholds):
         failures.append('HIGH_THRESHOLD_WITH_LARGE_HIDDEN_CARRIER')
 
-    root_gate = bool(re.search(r"documentElement\.classList\.add\s*\(\s*['\"]js['\"]", js))
-    remove_nojs = bool(re.search(r"documentElement\.classList\.remove\s*\(\s*['\"]no-js['\"]", js))
-    has_motion_ready = 'motion-ready' in text
-    evidence['immediate_js_gate'] = root_gate
-    evidence['remove_no_js_gate'] = remove_nojs
-    evidence['motion_ready_gate_present'] = has_motion_ready
-    if hidden_classes and not has_motion_ready and (root_gate or remove_nojs or unconditional_hidden):
-        failures.append('MOTION_RUNTIME_FAILURE_CAN_HIDE_CONTENT')
-
-    if hidden_classes and 'prefers-reduced-motion' not in css:
-        failures.append('NO_REDUCED_MOTION_FALLBACK')
-    elif hidden_classes:
-        reduced_blocks = re.findall(
-            r'@media\s*\(prefers-reduced-motion\s*:\s*reduce\)\s*\{(.*?)\}\s*', css, flags=re.I | re.S)
-        joined = '\n'.join(reduced_blocks)
-        if not re.search(r'opacity\s*:\s*1|visibility\s*:\s*visible', joined, re.I):
-            warnings.append('REDUCED_MOTION_FALLBACK_NOT_EXPLICITLY_VISIBLE')
+    motion_ids = sum(1 for e in htmldom.iter_elements(root) if 'data-motion-reveal' in e.attrs)
+    evidence['data_motion_reveal_count'] = motion_ids
+    if hidden_classes and motion_ids == 0:
+        warnings.append('NO_DATA_MOTION_REVEAL_IDENTITY')
 
     if args.editable:
         has_editor_override = bool(re.search(
@@ -150,11 +220,6 @@ def main() -> int:
             css, re.I | re.S))
         if not has_editor_override:
             failures.append('EDIT_MODE_MOTION_VISIBILITY_OVERRIDE_MISSING')
-
-    motion_ids = sum(1 for e in htmldom.iter_elements(root) if 'data-motion-reveal' in e.attrs)
-    evidence['data_motion_reveal_count'] = motion_ids
-    if hidden_classes and motion_ids == 0:
-        warnings.append('NO_DATA_MOTION_REVEAL_IDENTITY')
 
     result = {
         'status': 'PASS' if not failures else 'FAIL',

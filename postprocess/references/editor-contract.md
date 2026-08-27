@@ -78,6 +78,23 @@ DELIVERED（delivery_gate_status = PASS）
 | 权限 | `data-edit-authority`（human-editable / locked-fact / …）+ `data-edit-obligation-refs`（桥接 M3 obligation 追溯）。来源：可选 authority map，发现路径 `<output-root>/workspace/editable-authority-map.json` |
 | 动效可见性 | 扫 base CSS 检测 motion-reveal 隐藏类（rv/reveal/b-in 等）→ 元素标 `data-motion-reveal="true"`；编辑模式 CSS 强制全部可见 |
 
+## Motion Safety 属性（Gate 判定原则）
+
+motion Gate 验证的是**属性**，不是惯用语：唯一的判定问题是"JS
+失败/禁用时语义内容是否仍可见"。任何能被静态证明的兜底写法都
+通过，Gate 不规定实现词汇：
+
+```text
+V1  html.no-js 配对兜底   （默认隐藏 + no-js 时可见，V2.9 风格）
+V1b 隐藏规则条件化于 JS 状态类（html.motion-ready .rv{...}，默认可见）
+V2  同类无条件可见规则     （.rv{opacity:1!important} 覆盖默认）
+V3  prefers-reduced-motion 可见兜底
+```
+
+复合状态选择器（`.cls.on` / `.cls:hover`）不构成静态证明——它只在
+运行时状态成立后才生效。真无任何兜底的隐藏 →
+`HIDDEN_CONTENT_WITHOUT_JS_FAILURE_FALLBACK`。
+
 ## Namespace
 
 ```text

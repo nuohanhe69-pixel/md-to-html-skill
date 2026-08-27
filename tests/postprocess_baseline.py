@@ -173,6 +173,48 @@ def main() -> int:
         'gates': gates(drift, base_sha),
     }
 
+    # Motion gate property checks: the gate verifies the no-JS safety
+    # property, not a specific idiom. Both idioms below prove the same
+    # property and must PASS; a truly-unsafe page must FAIL.
+    motion_dir = work / 'motion'
+    motion_dir.mkdir()
+    GATE = SKILL_ROOT / 'postprocess' / 'scripts' / 'validate_motion_visibility_safety.py'
+    cases = {
+        # V1 idiom (V2.9 / GTM.html style): default-hidden + html.no-js fallback
+        'idiom-nojs': '''<!DOCTYPE html><html lang="zh" class="no-js"><head><meta charset="UTF-8"><style>
+.b-in{opacity:0;transform:translateX(-18px)}
+.b-in.on{opacity:1;transform:none}
+html.no-js .b-in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.b-in{opacity:1;transform:none}}
+</style></head><body><section data-du-id="DU001"><p class="b-in">内容</p></section>
+<script>document.documentElement.classList.remove('no-js');</script></body></html>''',
+        # V2 idiom (report.html style): hidden only under html.motion-ready
+        'idiom-conditional': '''<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><style>
+html.motion-ready .rv{opacity:0;transform:translateY(12px)}
+html.motion-ready .rv.rv-in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){html.motion-ready .rv{opacity:1;transform:none}}
+</style></head><body><section data-du-id="DU001"><p class="rv">内容</p></section>
+<script>if(!('IntersectionObserver' in window))return;var els=document.querySelectorAll('.rv');</script></body></html>''',
+        # Unsafe: hidden with NO fallback proof at all
+        'unsafe-no-fallback': '''<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8"><style>
+.b-in{opacity:0;transform:translateY(18px)}
+.b-in.on{opacity:1;transform:none}
+</style></head><body><section data-du-id="DU001"><p class="b-in">内容</p></section>
+<script>document.querySelectorAll('.b-in').forEach(e=>e.classList.add('on'));</script></body></html>''',
+    }
+    out['motion_gate'] = {}
+    for name, html_text in cases.items():
+        p = motion_dir / f'{name}.html'
+        p.write_text(html_text, encoding='utf-8')
+        r = subprocess.run([sys.executable, str(GATE), '--html', str(p)],
+                           capture_output=True, text=True, timeout=60)
+        try:
+            d = json.loads(r.stdout)
+            out['motion_gate'][name] = {'status': d.get('status'), 'failures': d.get('failures')}
+        except Exception:
+            out['motion_gate'][name] = {'status': 'PARSE_ERROR', 'failures': [r.stdout[-200:]]}
+
+
     # Generation-side boundary violation: the model pre-wrote an editor
     # attribute into the base report. PostProcess must refuse (never repair),
     # block delivery, and leave the base byte-identical.
@@ -235,6 +277,10 @@ def main() -> int:
         'sentinel_catches_module_loss': (
             out['sentinel']['status'] == 'FAIL'
             and out['sentinel']['module_capability_present'] is False),
+        'motion_gate_idiom_neutral': (
+            out['motion_gate']['idiom-nojs']['status'] == 'PASS'
+            and out['motion_gate']['idiom-conditional']['status'] == 'PASS'
+            and out['motion_gate']['unsafe-no-fallback']['status'] == 'FAIL'),
     }
     print(json.dumps(out, ensure_ascii=False, indent=2))
 

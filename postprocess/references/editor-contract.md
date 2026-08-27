@@ -18,6 +18,29 @@ report-editable.html
 
 Editor 不参与 Generation Plane。
 
+## Delivery Lifecycle
+
+```text
+GENERATION_COMPLETE
+↓
+POSTPROCESS_REQUIRED
+↓
+Required Delivery Finalizer（finalize_delivery.py，唯一入口）
+↓
+DELIVERY_READY
+↓
+DELIVERED（delivery_gate_status = PASS）
+```
+
+## Non-Interference
+
+```text
+Base report SHA before == after
+Base report 中 HE namespace = 0
+PostProcess 不调用 Huashu / LLM
+PostProcess 不修改 Motion / Navigation / Responsive
+```
+
 ## Namespace
 
 仅使用：

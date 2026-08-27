@@ -884,13 +884,32 @@ STEP 64 检查 Finalizer Gate：
         - delivery_gate_status = PASS
 ```
 
+三条硬规则：
+
+```text
+1. Phase 10 的唯一合法动作 = STEP 63 的 Finalizer 命令。
+
+2. 禁止手写 / 重新生成 / “参考实现” editable HTML：
+   report-editable.html 只能由 Finalizer 从 report.html 确定性派生；
+   任何 LLM 直接产出的 editable 副本都是漂移产物，会被确定性重建覆盖。
+
+3. STEP 64 缺任何指纹 = INVALID_DELIVERED，返回本 Phase 重跑 Finalizer；
+   禁止以此为由重做 V2.9 / Huashu / report.html。
+```
+
 如果 STEP 64 失败：
 
 ```text
 current_status = POSTPROCESS_BLOCKED
 禁止把本轮标记为 DELIVERED
-禁止重做 V2.9 / Huashu / report.html
 保留 Base Report 并报告 PostProcess Blocker
+```
+
+完整 PostProcess 契约的唯一正文：
+
+```text
+postprocess/README.md
+postprocess/references/editor-contract.md
 ```
 
 ---
@@ -1010,72 +1029,4 @@ Source Table Coverage
 
 现在直接执行完整任务；除唯一 Human Design Direction Gate 外，不要停在中间只给方案。
 
-
----
-
-# Required Post-Generation Delivery Finalizer V1.2
-
-> 本节只定义 Generation 冻结后的 Artifact 生命周期；不是 Huashu / HTML 设计输入。
-
-## 1. PostProcess 是正式 Phase
-
-```text
-GENERATION_COMPLETE
-↓
-POSTPROCESS_REQUIRED
-↓
-Required Delivery Finalizer
-↓
-DELIVERY_READY
-↓
-DELIVERED
-```
-
-不再使用 `STEP 60A/60B/60C` 隐藏 PostProcess。
-
-## 2. 最终化命令
-
-```bash
-python postprocess/scripts/finalize_delivery.py \
-  --output-root <absolute-output-root> \
-  --dispatch-mode <subagent|direct-fallback>
-```
-
-Finalizer 会确定性地：
-
-```text
-检查 report.html
-→ 执行 / 复用 Editor PostProcess
-→ 校验 Base SHA 未变化
-→ 校验三个 Editable 指纹
-→ 更新 run-state 的 PostProcess / Delivery Gate 状态
-```
-
-## 3. Resume Invariant
-
-任何恢复上下文在最终回复前必须重新检查 Artifact。
-
-若：
-
-```text
-report.html exists
-AND 任一 Editable 指纹缺失
-```
-
-则：
-
-```text
-旧 DELIVERED = INVALID
-current_status = POSTPROCESS_REQUIRED
-立即执行 Finalizer
-```
-
-## 4. Non-Interference
-
-```text
-Base report SHA before == after
-Base report 中 HE namespace = 0
-PostProcess 不调用 Huashu / LLM
-PostProcess 不修改 Motion / Navigation / Responsive
-```
 

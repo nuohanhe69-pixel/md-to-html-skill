@@ -147,7 +147,7 @@ def main() -> int:
     update_state(
         root,
         postprocess_required=True,
-        postprocess_extension_version='Editor Postprocess V1.2 Delivery Gate / Editor Runtime V1.1',
+        postprocess_extension_version='Editor Postprocess V2.0 Delivery Gate / Editor Runtime V2.0 (compile-time annotation)',
         postprocess_status=status,
         postprocess_dispatch_mode=a.dispatch_mode,
         editable_output_path='editable/report-editable.html',

@@ -63,3 +63,27 @@
 前后对比：`drift_overwrite_trace_recorded` **false → true**，其余行为不变。
 
 > 结论：漂移覆写从静默变为可观测。全链路 LLM 漂移拦截仍依赖 Phase 11 Artifact Reality Check + M1-1 三条硬规则；本留痕提供事后审计证据。
+
+## Editor V2.0 移植后复跑结果（同分支追加）
+
+改动：以 v3.0.1 的编译期标注注入器替换 V1.x 运行时盲发现（详见 HANDOVER §7）。
+基线断言同步升级：字节级 strip 检查替换为结构级 namespace 检查。
+
+| 断言 | happy | drift（重跑 Finalizer 后） |
+|---|---|---|
+| 全部 Delivery Gate（含三指纹 / SHA / delivery_gate_status） | ✅ PASS | ✅ PASS |
+| base SHA 全程不变 | ✅ | ✅ |
+| editable 标注（data-edit-id ≥5 / 模块 ≥3 / 运行时内嵌） | ✅ | ✅（确定性重建完整恢复） |
+| base 无 editor namespace（6 类标记全零） | ✅ | ✅ |
+| 结构级等价（validate_non_interference） | ✅ PASS | ✅ PASS |
+| motion 可见性（base + editable 双侧） | ✅ PASS | ✅ PASS |
+| motion-reveal 标注 / locked-fact / movable 模块 | ✅ | ✅ |
+| meta.base_report_sha256 与计数（元素/模块/locked/motion） | ✅ | ✅ |
+| rebuild_reason 漂移留痕（M1-3，移植后保持） | — | ✅ |
+
+结论：注入器、结构级非干扰、motion 安全、漂移恢复四链路全绿；运行时
+Playwright 冒烟在本机降级 SKIPPED（依赖缺失，不阻塞）。富文本段落
+（含行内标记）、模块排版、motion 隐藏元素的编辑能力由 editor_v2 断言
+间接证明（标注存在性 + 结构等价 + meta 计数），交互行为待全链路审计
+（见"全链路漂移审计协议"）在真实会话中人工确认。
+

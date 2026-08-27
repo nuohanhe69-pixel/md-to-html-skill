@@ -1,251 +1,392 @@
 (function(){
   'use strict';
-  if(window.__HE_EDITOR_RUNTIME__) return;
-  window.__HE_EDITOR_RUNTIME__ = true;
+  if (window.__humanEditLayerInitialized) return;
+  window.__humanEditLayerInitialized = true;
 
-  const META = (()=>{
-    try { return JSON.parse(document.getElementById('he-editor-meta')?.textContent || '{}'); }
-    catch(_) { return {}; }
-  })();
-  const cssTemplate = document.getElementById('he-editor-css-template');
-  const state = {
-    active:false, selected:null, selectedModule:null,
-    originals:new Map(), moduleOriginals:new Map(),
-    undo:[], redo:[], ledger:[], focusBefore:null
+  var doc = document;
+  var body = doc.body;
+  var ledgerNode = doc.getElementById('human-edit-ledger');
+  var baseNode = doc.getElementById('human-edit-base-state');
+  if (!ledgerNode || !baseNode) return;
+
+  function parseJSON(node, fallback){
+    try { return JSON.parse(node.textContent || ''); } catch(e) { return fallback; }
+  }
+  var ledger = parseJSON(ledgerNode, {schema_version:'1.0', history:[], cursor:-1});
+  var baseState = parseJSON(baseNode, {elements:{}, modules:{}});
+  if (!Array.isArray(ledger.history)) ledger.history=[];
+  if (typeof ledger.cursor !== 'number') ledger.cursor=ledger.history.length-1;
+
+  var state = {
+    editing:false,
+    selectedElement:null,
+    selectedModule:null,
+    focusBefore:null,
+    suppress:false
   };
 
-  function uid(prefix, i){ return `${prefix}${String(i).padStart(4,'0')}`; }
-  function isEditorNode(el){ return !!(el && (el.closest?.('he-editor-root') || el.id==='he-editor-root')); }
-  function hasMeaningfulText(el){ return !!(el.textContent || '').trim(); }
-  function safeLeaf(el){
-    if(!el || isEditorNode(el)) return false;
-    if(!hasMeaningfulText(el)) return false;
-    if(el.closest('script,style,noscript,template,svg,canvas')) return false;
-    const elementChildren = Array.from(el.children).filter(c=>c.tagName!=='BR');
-    return elementChildren.length===0;
-  }
-  function candidateElements(){
-    const selector = 'h1,h2,h3,h4,h5,h6,p,li,th,td,blockquote,figcaption,dt,dd,label,small,span,strong,b,em,i,a';
-    return Array.from(document.querySelectorAll(selector)).filter(safeLeaf);
-  }
-  function moduleElements(){
-    const preferred = Array.from(document.querySelectorAll('[data-du],[data-du-id],main > section,main > article,body > section,body > article,header,footer'));
-    let mods = preferred.filter(el=>!isEditorNode(el));
-    if(!mods.length){
-      const main = document.querySelector('main');
-      if(main) mods=[main];
-    }
-    if(!mods.length) mods = Array.from(document.body.children).filter(el=>!isEditorNode(el) && !['SCRIPT','STYLE','TEMPLATE'].includes(el.tagName));
-    return Array.from(new Set(mods));
-  }
-  function discover(){
-    moduleElements().forEach((el,i)=>{
-      if(!el.hasAttribute('data-he-module-id')) el.setAttribute('data-he-module-id',uid('HE-M',i+1));
-      const id=el.getAttribute('data-he-module-id');
-      if(!state.moduleOriginals.has(id)) state.moduleOriginals.set(id,{style:el.getAttribute('style')||''});
+  function el(tag, attrs, text){
+    var n=doc.createElement(tag);
+    Object.keys(attrs||{}).forEach(function(k){
+      if (k==='class') n.className=attrs[k]; else n.setAttribute(k, attrs[k]);
     });
-    candidateElements().forEach((el,i)=>{
-      if(!el.hasAttribute('data-he-edit-id')) el.setAttribute('data-he-edit-id',uid('HE-E',i+1));
-      const id=el.getAttribute('data-he-edit-id');
-      if(!state.originals.has(id)) state.originals.set(id,{html:el.innerHTML,style:el.getAttribute('style')||''});
+    if (text != null) n.textContent=text;
+    return n;
+  }
+
+  function addOption(select, value, label){
+    var o=doc.createElement('option'); o.value=value; o.textContent=label; select.appendChild(o);
+  }
+
+  var launcher=el('button',{id:'he-launcher','data-he-runtime-ui':'1',type:'button'},'✎ 编辑页面');
+  var toolbar=el('div',{id:'he-toolbar','data-he-runtime-ui':'1',role:'toolbar','aria-label':'人工编辑工具栏'});
+  var title=el('span',{class:'he-title'},'EDIT MODE');
+  var status=el('span',{class:'he-status'},'未选择内容');
+  var undoBtn=el('button',{id:'he-undo',type:'button'},'撤销');
+  var redoBtn=el('button',{id:'he-redo',type:'button'},'重做');
+  var resetElBtn=el('button',{id:'he-reset-el',type:'button'},'恢复元素');
+  var resetModBtn=el('button',{id:'he-reset-mod',type:'button'},'恢复模块');
+  var resetPageBtn=el('button',{id:'he-reset-page',type:'button',class:'he-danger'},'恢复全部');
+  var exportEditableBtn=el('button',{id:'he-export-editable',type:'button',class:'he-primary'},'保存可编辑版本');
+  var exportCleanBtn=el('button',{id:'he-export-clean',type:'button'},'导出发布版');
+  var exportPatchBtn=el('button',{id:'he-export-ledger',type:'button'},'导出修改记录');
+  var exitBtn=el('button',{id:'he-exit',type:'button'},'退出编辑');
+  [title,status,undoBtn,redoBtn,resetElBtn,resetModBtn,resetPageBtn,exportEditableBtn,exportCleanBtn,exportPatchBtn,exitBtn].forEach(function(n){toolbar.appendChild(n);});
+
+  var panel=el('aside',{id:'he-panel','data-he-runtime-ui':'1','aria-label':'编辑面板'});
+  panel.innerHTML='\
+    <div class="he-panel-head">\
+      <div class="he-kicker">CURRENT SELECTION</div>\
+      <div class="he-selection" id="he-selection">未选择</div>\
+      <div class="he-authority" id="he-authority">—</div>\
+    </div>\
+    <div class="he-section" id="he-element-section">\
+      <h4>元素编辑</h4>\
+      <label>文字<textarea id="he-text" disabled></textarea></label>\
+      <div class="he-grid">\
+        <label>字号<select id="he-font-size"></select></label>\
+        <label>字重<select id="he-font-weight"></select></label>\
+        <label>对齐<select id="he-align"></select></label>\
+        <label>文字颜色<input id="he-color" type="color" value="#111827"></label>\
+      </div>\
+      <div class="he-actions"><button type="button" id="he-apply-text" class="he-primary">应用文字</button></div>\
+      <p class="he-note">文本也可在页面中直接点击后编辑。Locked Content 会在首次修改前要求人工确认。</p>\
+    </div>\
+    <div class="he-section">\
+      <h4>模块样式</h4>\
+      <div class="he-grid">\
+        <label>上间距<select id="he-mt"></select></label>\
+        <label>下间距<select id="he-mb"></select></label>\
+        <label>上内边距<select id="he-pt"></select></label>\
+        <label>下内边距<select id="he-pb"></select></label>\
+      </div>\
+      <label>宽度<select id="he-width"></select></label>\
+      <label>布局<select id="he-layout"></select></label>\
+      <div class="he-grid">\
+        <label>背景色<input id="he-bg" type="color" value="#ffffff"></label>\
+        <label>边框<select id="he-border"></select></label>\
+      </div>\
+      <div class="he-actions">\
+        <button type="button" id="he-move-up">↑ 上移</button>\
+        <button type="button" id="he-move-down">↓ 下移</button>\
+      </div>\
+      <p class="he-note" id="he-move-note">仅显式标记为可安全移动的模块开放顺序调整。</p>\
+    </div>';
+
+  var confirm=el('div',{id:'he-confirm','data-he-runtime-ui':'1','aria-hidden':'true'});
+  confirm.innerHTML='\
+    <div class="he-confirm-card" role="dialog" aria-modal="true" aria-labelledby="he-confirm-title">\
+      <h3 id="he-confirm-title">⚠ Human Override</h3>\
+      <p id="he-confirm-text">该字段属于锁定内容。人工仍可修改，但此操作会记录为 Human Override；不会回写 Markdown、DIP 或其他上游材料。</p>\
+      <div class="he-confirm-actions"><button type="button" id="he-confirm-cancel">取消</button><button type="button" id="he-confirm-ok" class="he-primary">继续修改</button></div>\
+    </div>';
+
+  body.appendChild(launcher); body.appendChild(toolbar); body.appendChild(panel); body.appendChild(confirm);
+
+  var q=function(s){return doc.querySelector(s);};
+  var controls={
+    sel:q('#he-selection'), auth:q('#he-authority'), text:q('#he-text'), applyText:q('#he-apply-text'),
+    fontSize:q('#he-font-size'), fontWeight:q('#he-font-weight'), align:q('#he-align'), color:q('#he-color'),
+    mt:q('#he-mt'), mb:q('#he-mb'), pt:q('#he-pt'), pb:q('#he-pb'), width:q('#he-width'), layout:q('#he-layout'),
+    bg:q('#he-bg'), border:q('#he-border'), moveUp:q('#he-move-up'), moveDown:q('#he-move-down'), moveNote:q('#he-move-note')
+  };
+
+  [['','继承'],['12px','12'],['14px','14'],['16px','16'],['18px','18'],['20px','20'],['24px','24'],['28px','28'],['32px','32'],['40px','40'],['48px','48'],['64px','64']].forEach(function(x){addOption(controls.fontSize,x[0],x[1]);});
+  [['','继承'],['400','Regular'],['500','Medium'],['600','SemiBold'],['700','Bold'],['800','ExtraBold'],['900','Black']].forEach(function(x){addOption(controls.fontWeight,x[0],x[1]);});
+  [['','继承'],['left','左'],['center','中'],['right','右']].forEach(function(x){addOption(controls.align,x[0],x[1]);});
+  ['', '0px','8px','16px','24px','32px','48px','64px','96px'].forEach(function(v){addOption(controls.mt,v,v||'继承');addOption(controls.mb,v,v||'继承');addOption(controls.pt,v,v||'继承');addOption(controls.pb,v,v||'继承');});
+  [['','当前'],['720px','窄'],['960px','正文'],['1200px','宽'],['100%','满宽']].forEach(function(x){addOption(controls.width,x[0],x[1]);});
+  [['current','当前布局'],['single','单列'],['two','双列'],['row','横向排列'],['column','纵向排列']].forEach(function(x){addOption(controls.layout,x[0],x[1]);});
+  [['','当前'],['0','无'],['1px solid currentColor','1px'],['2px solid currentColor','2px']].forEach(function(x){addOption(controls.border,x[0],x[1]);});
+
+  function authorityOf(node){ return node && (node.getAttribute('data-edit-authority') || 'human-editable'); }
+  function isLocked(node){ var a=authorityOf(node); return a !== 'human-editable' && a !== 'free'; }
+  function moduleFor(node){ return node ? node.closest('[data-edit-module-id]') : null; }
+
+  function cleanSelection(){
+    doc.querySelectorAll('.he-selected-element').forEach(function(n){n.classList.remove('he-selected-element');});
+    doc.querySelectorAll('.he-selected-module').forEach(function(n){n.classList.remove('he-selected-module');});
+  }
+
+  function ensureTag(mod){
+    if (!mod) return;
+    var tag=mod.querySelector(':scope > .he-module-tag');
+    if (!tag){ tag=el('span',{class:'he-module-tag','data-he-runtime-ui':'1'},mod.getAttribute('data-edit-module-id')); mod.insertBefore(tag,mod.firstChild); }
+    tag.textContent=mod.getAttribute('data-edit-module-id');
+  }
+
+  function selectNode(node){
+    if (!state.editing) return;
+    cleanSelection();
+    state.selectedElement=node && node.hasAttribute('data-edit-id') ? node : null;
+    state.selectedModule=moduleFor(node) || (node && node.hasAttribute('data-edit-module-id') ? node : null);
+    if (state.selectedElement) state.selectedElement.classList.add('he-selected-element');
+    if (state.selectedModule){ state.selectedModule.classList.add('he-selected-module'); ensureTag(state.selectedModule); }
+    refreshPanel();
+  }
+
+  function refreshPanel(){
+    var e=state.selectedElement, m=state.selectedModule;
+    var name=e ? e.getAttribute('data-edit-id') : (m ? m.getAttribute('data-edit-module-id') : '未选择');
+    controls.sel.textContent=name;
+    var auth=e ? authorityOf(e) : (m ? authorityOf(m) : '—');
+    controls.auth.textContent=auth;
+    controls.auth.classList.toggle('warn', !!(e && isLocked(e)));
+    controls.text.disabled=!e;
+    controls.applyText.disabled=!e;
+    controls.text.value=e ? e.textContent : '';
+    controls.fontSize.disabled=controls.fontWeight.disabled=controls.align.disabled=controls.color.disabled=!e;
+    if(e){
+      controls.fontSize.value=e.style.fontSize||'';
+      controls.fontWeight.value=e.style.fontWeight||'';
+      controls.align.value=e.style.textAlign||'';
+      controls.color.value=toHex(getComputedStyle(e).color) || '#111827';
+    }
+    [controls.mt,controls.mb,controls.pt,controls.pb,controls.width,controls.layout,controls.bg,controls.border].forEach(function(c){c.disabled=!m;});
+    controls.moveUp.disabled=controls.moveDown.disabled=!(m && m.getAttribute('data-edit-movable')==='true');
+    controls.moveNote.textContent=(m && m.getAttribute('data-edit-movable')==='true') ? '移动会记录为 Human Override，仅改变最终产物叙事顺序。' : '该模块未标记为可安全移动；为保护 DOM / 响应式结构，顺序按钮已禁用。';
+    if(m){
+      controls.mt.value=m.style.marginTop||''; controls.mb.value=m.style.marginBottom||'';
+      controls.pt.value=m.style.paddingTop||''; controls.pb.value=m.style.paddingBottom||'';
+      controls.width.value=m.style.maxWidth||'';
+      controls.bg.value=toHex(getComputedStyle(m).backgroundColor) || '#ffffff';
+      controls.border.value=m.style.border||'';
+      controls.layout.value='current';
+    }
+    updateButtons();
+  }
+
+  function toHex(rgb){
+    var m=(rgb||'').match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/); if(!m) return null;
+    return '#'+[m[1],m[2],m[3]].map(function(x){return Number(x).toString(16).padStart(2,'0');}).join('');
+  }
+
+  function confirmOverride(node, cb){
+    if (!isLocked(node)) { cb(); return; }
+    confirm.classList.add('he-open'); confirm.setAttribute('aria-hidden','false');
+    var t=q('#he-confirm-text');
+    t.textContent='该字段属于 '+authorityOf(node)+'。人工仍可修改，但会记录为 Human Override；不会回写 Markdown、Source Inventory、DIP、Design Intent 或其他上游材料。';
+    var ok=q('#he-confirm-ok'), cancel=q('#he-confirm-cancel');
+    function done(yes){ ok.removeEventListener('click',yesFn); cancel.removeEventListener('click',noFn); confirm.classList.remove('he-open'); confirm.setAttribute('aria-hidden','true'); if(yes) cb(); }
+    function yesFn(){done(true);} function noFn(){done(false);}
+    ok.addEventListener('click',yesFn); cancel.addEventListener('click',noFn);
+  }
+
+  function opTarget(op){
+    if(op.target_type==='element') return doc.querySelector('[data-edit-id="'+cssEsc(op.target)+'"]');
+    return doc.querySelector('[data-edit-module-id="'+cssEsc(op.target)+'"]');
+  }
+  function cssEsc(v){ return window.CSS && CSS.escape ? CSS.escape(v) : String(v).replace(/"/g,'\\"'); }
+
+  function commit(op, alreadyApplied){
+    if(state.suppress) return;
+    if(ledger.cursor < ledger.history.length-1) ledger.history=ledger.history.slice(0,ledger.cursor+1);
+    op.patch_id='HE-'+String(ledger.history.length+1).padStart(4,'0');
+    op.timestamp=new Date().toISOString();
+    ledger.history.push(op); ledger.cursor=ledger.history.length-1;
+    if(!alreadyApplied) applyOp(op,true);
+    syncLedger(); updateButtons(); refreshPanel();
+  }
+
+  function applyOp(op, forward){
+    var n=opTarget(op); if(!n) return;
+    state.suppress=true;
+    var v=forward?op.after:op.before;
+    if(op.operation==='text_replace') n.textContent=v;
+    else if(op.operation==='style_change') n.style.setProperty(op.property,v||'');
+    else if(op.operation==='style_attr') { if(v) n.setAttribute('style',v); else n.removeAttribute('style'); }
+    else if(op.operation==='move_module') moveToIndex(n, v);
+    state.suppress=false;
+  }
+
+  function moveToIndex(node, index){
+    var p=node.parentElement; if(!p) return;
+    var sibs=Array.prototype.filter.call(p.children,function(x){return x.hasAttribute && x.hasAttribute('data-edit-module-id');});
+    index=Math.max(0,Math.min(Number(index)||0,sibs.length-1));
+    var ref=sibs[index];
+    if(ref===node) return;
+    if(sibs.indexOf(node)<index) p.insertBefore(node,ref.nextSibling); else p.insertBefore(node,ref);
+  }
+
+  function currentModuleIndex(m){
+    if(!m||!m.parentElement) return -1;
+    return Array.prototype.filter.call(m.parentElement.children,function(x){return x.hasAttribute&&x.hasAttribute('data-edit-module-id');}).indexOf(m);
+  }
+
+  function syncLedger(){
+    ledger.effective_patches=ledger.history.slice(0,ledger.cursor+1);
+    ledger.updated_at=new Date().toISOString();
+    ledgerNode.textContent=JSON.stringify(ledger,null,2);
+  }
+
+  function updateButtons(){
+    undoBtn.disabled=ledger.cursor<0;
+    redoBtn.disabled=ledger.cursor>=ledger.history.length-1;
+    resetElBtn.disabled=!state.selectedElement;
+    resetModBtn.disabled=!state.selectedModule;
+  }
+
+  function undo(){ if(ledger.cursor<0)return; var op=ledger.history[ledger.cursor]; applyOp(op,false); ledger.cursor--; syncLedger(); refreshPanel(); }
+  function redo(){ if(ledger.cursor>=ledger.history.length-1)return; ledger.cursor++; applyOp(ledger.history[ledger.cursor],true); syncLedger(); refreshPanel(); }
+
+  function setEditing(on){
+    state.editing=!!on;
+    body.classList.toggle('he-editing',state.editing);
+    doc.querySelectorAll('[data-edit-id]').forEach(function(n){
+      if(state.editing && n.getAttribute('data-edit-type')==='text') n.setAttribute('contenteditable','true');
+      else n.removeAttribute('contenteditable');
+      n.setAttribute('spellcheck','false');
+    });
+    if(!state.editing){ cleanSelection(); state.selectedElement=null; state.selectedModule=null; }
+    refreshPanel();
+  }
+
+  launcher.addEventListener('click',function(){setEditing(true);});
+  exitBtn.addEventListener('click',function(){setEditing(false);});
+  undoBtn.addEventListener('click',undo); redoBtn.addEventListener('click',redo);
+
+  doc.addEventListener('click',function(e){
+    if(!state.editing) return;
+    if(e.target.closest('[data-he-runtime-ui]')) return;
+    var editable=e.target.closest('[data-edit-id]');
+    var mod=e.target.closest('[data-edit-module-id]');
+    if(editable || mod){ e.preventDefault(); e.stopPropagation(); }
+    if(editable) selectNode(editable); else if(mod) selectNode(mod);
+  },true);
+
+  doc.addEventListener('focusin',function(e){
+    if(!state.editing || !e.target.hasAttribute('data-edit-id')) return;
+    state.focusBefore=e.target.textContent;
+    selectNode(e.target);
+  });
+  doc.addEventListener('focusout',function(e){
+    if(!state.editing || !e.target.hasAttribute('data-edit-id') || state.focusBefore==null) return;
+    var node=e.target, before=state.focusBefore, after=node.textContent; state.focusBefore=null;
+    if(before===after) return;
+    // Undo the direct browser edit until authority is confirmed, then replay as a tracked patch.
+    node.textContent=before;
+    confirmOverride(node,function(){
+      node.textContent=after;
+      commit({target_type:'element',target:node.getAttribute('data-edit-id'),operation:'text_replace',before:before,after:after,authority:authorityOf(node),scope:isLocked(node)?'HUMAN_OVERRIDE':'HUMAN_EDIT'},true);
+    });
+  });
+
+  controls.applyText.addEventListener('click',function(){
+    var n=state.selectedElement; if(!n)return; var before=n.textContent, after=controls.text.value; if(before===after)return;
+    confirmOverride(n,function(){ commit({target_type:'element',target:n.getAttribute('data-edit-id'),operation:'text_replace',before:before,after:after,authority:authorityOf(n),scope:isLocked(n)?'HUMAN_OVERRIDE':'HUMAN_EDIT'}); });
+  });
+
+  function bindElementStyle(control, prop){
+    control.addEventListener('change',function(){
+      var n=state.selectedElement; if(!n)return; var before=n.style.getPropertyValue(prop), after=control.value;
+      if(before===after)return; confirmOverride(n,function(){ commit({target_type:'element',target:n.getAttribute('data-edit-id'),operation:'style_change',property:prop,before:before,after:after,authority:authorityOf(n),scope:isLocked(n)?'HUMAN_OVERRIDE':'HUMAN_EDIT'}); });
     });
   }
-  function closestModule(el){ return el?.closest?.('[data-he-module-id]') || null; }
-  function ident(el){ return el?.getAttribute?.('data-he-edit-id') || el?.getAttribute?.('data-he-module-id') || ''; }
-  function elementById(id){
-    return document.querySelector(`[data-he-edit-id="${CSS.escape(id)}"],[data-he-module-id="${CSS.escape(id)}"]`);
-  }
-  function snapshot(el, kind){
-    if(!el) return '';
-    return kind==='html' ? el.innerHTML : (el.getAttribute('style')||'');
-  }
-  function setSnapshot(el, kind, value){
-    if(kind==='html') el.innerHTML=value;
-    else if(value) el.setAttribute('style',value); else el.removeAttribute('style');
-  }
-  function record(el, kind, before, after, source){
-    if(!el || before===after) return;
-    const op={id:ident(el),kind,before,after,source:source||'human',ts:new Date().toISOString()};
-    state.undo.push(op); state.redo.length=0; state.ledger.push(op); refreshUI();
-  }
-  function applyOp(op, value){
-    const el=elementById(op.id); if(!el) return;
-    setSnapshot(el,op.kind,value);
-    if(state.selected===el || state.selectedModule===el) syncInspector();
-  }
-  function undo(){ const op=state.undo.pop(); if(!op) return; applyOp(op,op.before); state.redo.push(op); refreshUI(); }
-  function redo(){ const op=state.redo.pop(); if(!op) return; applyOp(op,op.after); state.undo.push(op); refreshUI(); }
+  bindElementStyle(controls.fontSize,'font-size'); bindElementStyle(controls.fontWeight,'font-weight'); bindElementStyle(controls.align,'text-align');
+  controls.color.addEventListener('change',function(){ var n=state.selectedElement;if(!n)return;var b=n.style.color||'',a=controls.color.value;confirmOverride(n,function(){commit({target_type:'element',target:n.getAttribute('data-edit-id'),operation:'style_change',property:'color',before:b,after:a,authority:authorityOf(n),scope:isLocked(n)?'HUMAN_OVERRIDE':'HUMAN_EDIT'});});});
 
-  const host=document.createElement('he-editor-root');
-  host.id='he-editor-root';
-  host.setAttribute('style','all:initial;position:fixed;inset:auto 0 0 auto;z-index:2147483647;pointer-events:none;');
-  const shadow=host.attachShadow({mode:'open'});
-  if(cssTemplate?.content) shadow.appendChild(cssTemplate.content.cloneNode(true));
-  const wrap=document.createElement('div');
-  wrap.innerHTML=`
-    <button class="he-launcher" id="he-launcher" style="pointer-events:auto">✎ 编辑</button>
-    <div class="he-panel" id="he-panel" style="pointer-events:auto">
-      <div class="he-head"><div class="he-title">Human Editor</div><span class="he-badge" id="he-count">0 edits</span></div>
-      <div class="he-body">
-        <div class="he-section">
-          <span class="he-label">选择</span><div class="he-value" id="he-selected">未选择元素</div>
-          <div class="he-note">进入编辑模式后点击页面中的安全文本叶节点。复杂父容器不会整体 contenteditable。</div>
-        </div>
-        <div class="he-section">
-          <span class="he-label">文字</span><textarea class="he-textarea" id="he-text" disabled></textarea>
-          <div class="he-row">
-            <div><span class="he-label">字号</span><input class="he-input" id="he-font-size" placeholder="如 16px"></div>
-            <div><span class="he-label">字重</span><select class="he-select" id="he-font-weight"><option value="">保持</option><option>400</option><option>500</option><option>600</option><option>700</option><option>800</option><option>900</option></select></div>
-          </div>
-          <div class="he-row">
-            <div><span class="he-label">颜色</span><input class="he-input" id="he-color" placeholder="#111 / var(...) "></div>
-            <div><span class="he-label">对齐</span><select class="he-select" id="he-align"><option value="">保持</option><option value="left">left</option><option value="center">center</option><option value="right">right</option><option value="justify">justify</option></select></div>
-          </div>
-          <div class="he-actions"><button class="he-btn" id="he-reset-el">重置元素</button></div>
-        </div>
-        <div class="he-section">
-          <span class="he-label">模块</span><div class="he-value" id="he-module">未识别模块</div>
-          <div class="he-row"><input class="he-input" id="he-mt" placeholder="margin-top"><input class="he-input" id="he-mb" placeholder="margin-bottom"></div>
-          <div class="he-row"><input class="he-input" id="he-pt" placeholder="padding-top"><input class="he-input" id="he-pb" placeholder="padding-bottom"></div>
-          <div class="he-row"><input class="he-input" id="he-width" placeholder="max-width"><input class="he-input" id="he-bg" placeholder="background"></div>
-          <div class="he-row one"><input class="he-input" id="he-border" placeholder="border，如 1px solid #ddd"></div>
-          <div class="he-actions"><button class="he-btn" id="he-reset-mod">重置模块样式</button></div>
-        </div>
-        <div class="he-section">
-          <div class="he-actions">
-            <button class="he-btn" id="he-undo">撤销</button><button class="he-btn" id="he-redo">重做</button>
-            <button class="he-btn danger" id="he-reset-all">全部重置</button>
-          </div>
-          <div class="he-actions">
-            <button class="he-btn primary" id="he-save">保存可编辑版</button>
-            <button class="he-btn" id="he-publish">导出发布版</button>
-            <button class="he-btn" id="he-ledger">导出台账</button>
-          </div>
-          <div class="he-status" id="he-status">浏览模式：原报告行为保持不变。</div>
-        </div>
-      </div>
-    </div>`;
-  while(wrap.firstChild) shadow.appendChild(wrap.firstChild);
-  document.body.appendChild(host);
+  function bindModuleStyle(control, prop){
+    control.addEventListener('change',function(){ var n=state.selectedModule;if(!n)return;var b=n.style.getPropertyValue(prop),a=control.value;if(b===a)return;commit({target_type:'module',target:n.getAttribute('data-edit-module-id'),operation:'style_change',property:prop,before:b,after:a,authority:'HUMAN',scope:'HOW_OVERRIDE'}); });
+  }
+  bindModuleStyle(controls.mt,'margin-top'); bindModuleStyle(controls.mb,'margin-bottom'); bindModuleStyle(controls.pt,'padding-top'); bindModuleStyle(controls.pb,'padding-bottom');
+  controls.width.addEventListener('change',function(){var n=state.selectedModule;if(!n)return;var b=n.style.maxWidth||'',a=controls.width.value;commit({target_type:'module',target:n.getAttribute('data-edit-module-id'),operation:'style_change',property:'max-width',before:b,after:a,authority:'HUMAN',scope:'HOW_OVERRIDE'});});
+  controls.bg.addEventListener('change',function(){var n=state.selectedModule;if(!n)return;commit({target_type:'module',target:n.getAttribute('data-edit-module-id'),operation:'style_change',property:'background-color',before:n.style.backgroundColor||'',after:controls.bg.value,authority:'HUMAN',scope:'HOW_OVERRIDE'});});
+  controls.border.addEventListener('change',function(){var n=state.selectedModule;if(!n)return;commit({target_type:'module',target:n.getAttribute('data-edit-module-id'),operation:'style_change',property:'border',before:n.style.border||'',after:controls.border.value,authority:'HUMAN',scope:'HOW_OVERRIDE'});});
+  controls.layout.addEventListener('change',function(){
+    var n=state.selectedModule;if(!n||controls.layout.value==='current')return;
+    var b=n.getAttribute('style')||'';
+    if(controls.layout.value==='single'){n.style.display='block';n.style.gridTemplateColumns='';n.style.flexDirection='';n.style.flexWrap='';}
+    if(controls.layout.value==='two'){n.style.display='grid';n.style.gridTemplateColumns='repeat(2,minmax(0,1fr))';n.style.gap=n.style.gap||'16px';n.style.flexDirection='';}
+    if(controls.layout.value==='row'){n.style.display='flex';n.style.flexDirection='row';n.style.flexWrap='wrap';n.style.gap=n.style.gap||'16px';n.style.gridTemplateColumns='';}
+    if(controls.layout.value==='column'){n.style.display='flex';n.style.flexDirection='column';n.style.gap=n.style.gap||'16px';n.style.gridTemplateColumns='';}
+    var a=n.getAttribute('style')||'';
+    // Restore then commit so undo/redo owns the mutation.
+    if(b) n.setAttribute('style',b); else n.removeAttribute('style');
+    commit({target_type:'module',target:n.getAttribute('data-edit-module-id'),operation:'style_attr',before:b,after:a,authority:'HUMAN',scope:'HOW_OVERRIDE'});
+  });
 
-  const $=id=>shadow.getElementById(id);
-  const launcher=$('he-launcher'), panel=$('he-panel'), selectedLabel=$('he-selected'), moduleLabel=$('he-module'), status=$('he-status');
+  function moveSelected(delta){
+    var m=state.selectedModule;if(!m||m.getAttribute('data-edit-movable')!=='true')return;
+    var before=currentModuleIndex(m), after=before+delta; if(before<0)return;
+    var count=Array.prototype.filter.call(m.parentElement.children,function(x){return x.hasAttribute&&x.hasAttribute('data-edit-module-id');}).length;
+    after=Math.max(0,Math.min(after,count-1)); if(after===before)return;
+    commit({target_type:'module',target:m.getAttribute('data-edit-module-id'),operation:'move_module',before:before,after:after,authority:'HUMAN',scope:'NARRATIVE_ORDER_OVERRIDE'});
+  }
+  controls.moveUp.addEventListener('click',function(){moveSelected(-1);}); controls.moveDown.addEventListener('click',function(){moveSelected(1);});
 
-  function setSelected(el){
-    if(state.selected && state.selected!==el){ state.selected.removeAttribute('data-he-selected'); state.selected.removeAttribute('contenteditable'); }
-    state.selected=el; state.selectedModule=closestModule(el);
-    if(el){
-      el.setAttribute('data-he-selected','true');
-      if(safeLeaf(el)) el.setAttribute('contenteditable','true');
+  function resetElement(){
+    var n=state.selectedElement;if(!n)return;var id=n.getAttribute('data-edit-id'),base=baseState.elements&&baseState.elements[id];if(!base)return;
+    if(n.textContent!==base.text) commit({target_type:'element',target:id,operation:'text_replace',before:n.textContent,after:base.text,authority:'HUMAN',scope:'RESET'});
+    var cur=n.getAttribute('style')||'', bs=base.style||''; if(cur!==bs) commit({target_type:'element',target:id,operation:'style_attr',before:cur,after:bs,authority:'HUMAN',scope:'RESET'});
+  }
+  function resetModule(){
+    var m=state.selectedModule;if(!m)return;var mid=m.getAttribute('data-edit-module-id'),base=baseState.modules&&baseState.modules[mid];
+    if(base){var cur=m.getAttribute('style')||'',bs=base.style||'';if(cur!==bs)commit({target_type:'module',target:mid,operation:'style_attr',before:cur,after:bs,authority:'HUMAN',scope:'RESET'}); if(m.getAttribute('data-edit-movable')==='true' && typeof base.index==='number' && currentModuleIndex(m)!==base.index)commit({target_type:'module',target:mid,operation:'move_module',before:currentModuleIndex(m),after:base.index,authority:'HUMAN',scope:'RESET'});}
+    m.querySelectorAll('[data-edit-id]').forEach(function(n){var id=n.getAttribute('data-edit-id'),b=baseState.elements&&baseState.elements[id];if(!b)return;if(n.textContent!==b.text)commit({target_type:'element',target:id,operation:'text_replace',before:n.textContent,after:b.text,authority:'HUMAN',scope:'RESET'});var cs=n.getAttribute('style')||'',bs2=b.style||'';if(cs!==bs2)commit({target_type:'element',target:id,operation:'style_attr',before:cs,after:bs2,authority:'HUMAN',scope:'RESET'});});
+  }
+  function resetPage(){
+    Object.keys(baseState.elements||{}).forEach(function(id){var n=doc.querySelector('[data-edit-id="'+cssEsc(id)+'"]'),b=baseState.elements[id];if(!n)return;if(n.textContent!==b.text)commit({target_type:'element',target:id,operation:'text_replace',before:n.textContent,after:b.text,authority:'HUMAN',scope:'RESET'});var cs=n.getAttribute('style')||'',bs=b.style||'';if(cs!==bs)commit({target_type:'element',target:id,operation:'style_attr',before:cs,after:bs,authority:'HUMAN',scope:'RESET'});});
+    Object.keys(baseState.modules||{}).forEach(function(id){var n=doc.querySelector('[data-edit-module-id="'+cssEsc(id)+'"]'),b=baseState.modules[id];if(!n)return;var cs=n.getAttribute('style')||'',bs=b.style||'';if(cs!==bs)commit({target_type:'module',target:id,operation:'style_attr',before:cs,after:bs,authority:'HUMAN',scope:'RESET'});if(n.getAttribute('data-edit-movable')==='true'&&typeof b.index==='number'&&currentModuleIndex(n)!==b.index)commit({target_type:'module',target:id,operation:'move_module',before:currentModuleIndex(n),after:b.index,authority:'HUMAN',scope:'RESET'});});
+  }
+  resetElBtn.addEventListener('click',resetElement); resetModBtn.addEventListener('click',resetModule); resetPageBtn.addEventListener('click',function(){ if(window.confirm('恢复全部人工修改到 Generated Base？该动作本身也会进入撤销历史。')) resetPage(); });
+
+  function sanitizeClone(clean){
+    syncLedger();
+    var clone=doc.documentElement.cloneNode(true);
+    clone.classList.remove('he-editing');
+    var cloneBody=clone.querySelector('body'); if(cloneBody) cloneBody.classList.remove('he-editing');
+    clone.querySelectorAll('[data-he-runtime-ui]').forEach(function(n){n.remove();});
+    clone.querySelectorAll('.he-selected-element,.he-selected-module').forEach(function(n){n.classList.remove('he-selected-element','he-selected-module');});
+    clone.querySelectorAll('[contenteditable]').forEach(function(n){n.removeAttribute('contenteditable');});
+    if(clean){
+      ['he-editor-style','he-editor-script','human-edit-ledger','human-edit-base-state','human-edit-meta'].forEach(function(id){var n=clone.querySelector('#'+id);if(n)n.remove();});
+      clone.querySelectorAll('[data-edit-id]').forEach(function(n){n.removeAttribute('data-edit-id');n.removeAttribute('data-edit-type');n.removeAttribute('data-edit-authority');n.removeAttribute('data-edit-obligation-refs');});
+      clone.querySelectorAll('[data-edit-module-id]').forEach(function(n){n.removeAttribute('data-edit-module-id');n.removeAttribute('data-edit-movable');});
+      clone.querySelectorAll('[data-motion-reveal]').forEach(function(n){n.removeAttribute('data-motion-reveal');});
+      clone.querySelectorAll('[spellcheck]').forEach(function(n){n.removeAttribute('spellcheck');});
+    } else {
+      var ln=clone.querySelector('#human-edit-ledger'); if(ln) ln.textContent=JSON.stringify(ledger,null,2);
     }
-    syncInspector();
+    return '<!DOCTYPE html>\n'+clone.outerHTML;
   }
-  function syncInspector(){
-    const el=state.selected, mod=state.selectedModule;
-    selectedLabel.textContent=el ? `${el.tagName.toLowerCase()} · ${ident(el)}` : '未选择元素';
-    moduleLabel.textContent=mod ? `${mod.tagName.toLowerCase()} · ${ident(mod)}` : '未识别模块';
-    const text=$('he-text'); text.disabled=!el; text.value=el ? el.textContent : '';
-    $('he-font-size').value=el?.style?.fontSize||''; $('he-font-weight').value=el?.style?.fontWeight||'';
-    $('he-color').value=el?.style?.color||''; $('he-align').value=el?.style?.textAlign||'';
-    $('he-mt').value=mod?.style?.marginTop||''; $('he-mb').value=mod?.style?.marginBottom||'';
-    $('he-pt').value=mod?.style?.paddingTop||''; $('he-pb').value=mod?.style?.paddingBottom||'';
-    $('he-width').value=mod?.style?.maxWidth||''; $('he-bg').value=mod?.style?.background||''; $('he-border').value=mod?.style?.border||'';
-  }
-  function refreshUI(){
-    $('he-count').textContent=`${state.ledger.length} edits`;
-    $('he-undo').disabled=!state.undo.length; $('he-redo').disabled=!state.redo.length;
-  }
-  function enter(){
-    discover(); state.active=true; panel.classList.add('open'); launcher.textContent='✓ 完成编辑';
-    status.textContent='编辑模式：点击安全文本叶节点直接修改；编辑器不控制原页面 Motion / Scroll / Navigation。';
-  }
-  function exit(){
-    state.active=false; if(state.selected){state.selected.removeAttribute('contenteditable'); state.selected.removeAttribute('data-he-selected');}
-    state.selected=null; state.selectedModule=null; panel.classList.remove('open'); launcher.textContent='✎ 编辑';
-    status.textContent='浏览模式：原报告行为保持不变。'; syncInspector();
-  }
-  launcher.addEventListener('click',()=> state.active ? exit() : enter());
 
-  document.addEventListener('click',e=>{
-    if(!state.active || isEditorNode(e.target)) return;
-    const el=e.target.closest?.('[data-he-edit-id]');
-    if(!el) return;
-    if(el.tagName==='A') e.preventDefault();
-    setSelected(el);
-  },true);
-  document.addEventListener('focusin',e=>{
-    if(!state.active) return;
-    const el=e.target.closest?.('[data-he-edit-id]');
-    if(el && el===state.selected) state.focusBefore=el.innerHTML;
-  },true);
-  document.addEventListener('focusout',e=>{
-    const el=e.target.closest?.('[data-he-edit-id]');
-    if(el && state.focusBefore!==null){ const after=el.innerHTML; record(el,'html',state.focusBefore,after,'direct-text'); state.focusBefore=null; syncInspector(); }
-  },true);
-
-  function bindStyle(id, prop, module=false){
-    $(id).addEventListener('change',e=>{
-      const el=module ? state.selectedModule : state.selected; if(!el) return;
-      const before=snapshot(el,'style'); el.style[prop]=e.target.value; const after=snapshot(el,'style');
-      record(el,'style',before,after,module?'module-style':'element-style');
-    });
-  }
-  $('he-text').addEventListener('change',e=>{
-    const el=state.selected; if(!el) return;
-    const before=el.innerHTML;
-    el.textContent=e.target.value;
-    const after=el.innerHTML; record(el,'html',before,after,'inspector-text');
-  });
-  bindStyle('he-font-size','fontSize'); bindStyle('he-font-weight','fontWeight'); bindStyle('he-color','color'); bindStyle('he-align','textAlign');
-  bindStyle('he-mt','marginTop',true); bindStyle('he-mb','marginBottom',true); bindStyle('he-pt','paddingTop',true); bindStyle('he-pb','paddingBottom',true);
-  bindStyle('he-width','maxWidth',true); bindStyle('he-bg','background',true); bindStyle('he-border','border',true);
-  $('he-undo').addEventListener('click',undo); $('he-redo').addEventListener('click',redo);
-
-  $('he-reset-el').addEventListener('click',()=>{
-    const el=state.selected; if(!el) return; const o=state.originals.get(ident(el)); if(!o) return;
-    const beforeHtml=el.innerHTML, beforeStyle=snapshot(el,'style'); el.innerHTML=o.html; setSnapshot(el,'style',o.style);
-    record(el,'html',beforeHtml,o.html,'reset-element'); if(beforeStyle!==o.style) record(el,'style',beforeStyle,o.style,'reset-element'); syncInspector();
-  });
-  $('he-reset-mod').addEventListener('click',()=>{
-    const mod=state.selectedModule; if(!mod) return; const o=state.moduleOriginals.get(ident(mod)); if(!o) return;
-    const before=snapshot(mod,'style'); setSnapshot(mod,'style',o.style); record(mod,'style',before,o.style,'reset-module'); syncInspector();
-  });
-  $('he-reset-all').addEventListener('click',()=>{
-    if(!window.confirm('确认重置本次人工编辑？')) return;
-    state.originals.forEach((o,id)=>{const el=elementById(id); if(el){el.innerHTML=o.html; setSnapshot(el,'style',o.style);}});
-    state.moduleOriginals.forEach((o,id)=>{const el=elementById(id); if(el)setSnapshot(el,'style',o.style);});
-    state.undo.length=0; state.redo.length=0; state.ledger.push({kind:'reset-all',ts:new Date().toISOString()}); refreshUI(); syncInspector();
-  });
-
-  function cleanEphemeral(root, removeRuntime){
-    root.querySelectorAll('[contenteditable]').forEach(el=>el.removeAttribute('contenteditable'));
-    root.querySelectorAll('[data-he-selected]').forEach(el=>el.removeAttribute('data-he-selected'));
-    root.querySelectorAll('he-editor-root').forEach(el=>el.remove());
-    if(removeRuntime){
-      root.querySelectorAll('[data-he-edit-id],[data-he-module-id]').forEach(el=>{el.removeAttribute('data-he-edit-id');el.removeAttribute('data-he-module-id');});
-      ['he-editor-css-template','he-editor-meta','he-editor-runtime'].forEach(id=>root.getElementById(id)?.remove());
-      const walker=document.createTreeWalker(root,NodeFilter.SHOW_COMMENT); const rm=[]; while(walker.nextNode()){ if((walker.currentNode.nodeValue||'').includes('HE_POSTPROCESS_')) rm.push(walker.currentNode); } rm.forEach(n=>n.remove());
-    }
-  }
-  function serialize(clone){ return '<!DOCTYPE html>\n'+clone.documentElement.outerHTML; }
   function download(name, text, type){
-    const blob=new Blob([text],{type:type||'text/html;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click();
-    setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);
+    var blob=new Blob([text],{type:type||'text/plain;charset=utf-8'});var url=URL.createObjectURL(blob);var a=doc.createElement('a');a.href=url;a.download=name;doc.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1200);
   }
-  $('he-save').addEventListener('click',()=>{
-    const clone=document.cloneNode(true); cleanEphemeral(clone,false); download('report-editable.html',serialize(clone)); status.textContent='已导出可继续编辑的 HTML。';
-  });
-  $('he-publish').addEventListener('click',()=>{
-    const clone=document.cloneNode(true); cleanEphemeral(clone,true); download('report-published.html',serialize(clone)); status.textContent='已导出干净发布版 HTML。';
-  });
-  $('he-ledger').addEventListener('click',()=>{
-    download('human-edit-ledger.json',JSON.stringify({schema:'he-ledger-v1',base_sha256:META.base_report_sha256||'',exported_at:new Date().toISOString(),edits:state.ledger},null,2),'application/json');
-  });
-  document.addEventListener('keydown',e=>{
-    if(!state.active || e.target?.isContentEditable) return;
-    if((e.metaKey||e.ctrlKey)&&!e.shiftKey&&e.key.toLowerCase()==='z'){e.preventDefault();undo();}
-    if(((e.metaKey||e.ctrlKey)&&e.shiftKey&&e.key.toLowerCase()==='z')||(e.ctrlKey&&e.key.toLowerCase()==='y')){e.preventDefault();redo();}
+  function stamp(){var d=new Date();return d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'-'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');}
+  exportEditableBtn.addEventListener('click',function(){download('report-edited-'+stamp()+'.html',sanitizeClone(false),'text/html;charset=utf-8');});
+  exportCleanBtn.addEventListener('click',function(){download('report-published-'+stamp()+'.html',sanitizeClone(true),'text/html;charset=utf-8');});
+  exportPatchBtn.addEventListener('click',function(){syncLedger();download('human-edit-history-'+stamp()+'.json',JSON.stringify(ledger,null,2),'application/json;charset=utf-8');});
+
+  window.addEventListener('keydown',function(e){
+    if(!state.editing)return;
+    var active=doc.activeElement, typing=active && (active.isContentEditable || /INPUT|TEXTAREA|SELECT/.test(active.tagName));
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'&&!typing){e.preventDefault();if(e.shiftKey)redo();else undo();}
+    if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='y'&&!typing){e.preventDefault();redo();}
+    if(e.key==='Escape'&&!typing){setEditing(false);}
   });
 
-  refreshUI(); syncInspector();
+  // Preserve existing report behavior; editor starts opt-in and local-only.
+  setEditing(false);
+  syncLedger();
 })();

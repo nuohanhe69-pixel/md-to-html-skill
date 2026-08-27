@@ -263,3 +263,53 @@ md-to-html-report-editorworkflow/
 | 已知坑 | 本文档 §3（P1 漂移务必先读） |
 
 交接时口头补充的关键背景：**当前 git 只有一个 baseline commit（`28ea89f`），任何重构请先开分支保留 V2.9 原貌，M1 止血改动独立成 commit，方便回滚对比。**
+
+---
+
+## 7. Editor V2.0 移植追记（2026-08-27，分支 refactor/v3-restructure）
+
+### 为什么要换编辑器（V1.x 的天花板根因）
+
+用户实测发现 V1.x 编辑器"只有部分字体能改"。根因不是实现疏漏，而是
+**"非干扰"的证明方式锁死了能力上限**：
+
+```text
+V1.x: 字节级证明（剥离注入块后逐字节 == base）
+  → 注入器一个字节都不能碰 base DOM
+  → 编辑器只能"盲注入"，在浏览器里运行时自发现可编辑节点
+  → 运行时发现必须保守（safeLeaf 零子元素 + 标签白名单）
+  → 富文本段落（含 strong/a/span）全部不可编辑
+  → motion 未触发的元素（opacity:0）看不见也改不到
+```
+
+对照版本 `md-to-html-report-v3.0.1-motion-visibility-safety` 证明了另一条
+路线：**编译期结构化标注 + 结构级非干扰证明**——注入前用解析器全量分析
+DOM 并加 `data-edit-*` 标注，非干扰改为"剥离注入后 DOM 树 == base 树"。
+证明弱一档，换来：富段落可编辑、模块级排版/排序、motion 元素编辑态强制
+可见、权限/台账/跨会话撤销。
+
+### 实际改动（同一 Finalizer 入口不变）
+
+| 项 | 变化 |
+|---|---|
+| `inject_editor.py`（新） | 编译期标注注入器；**标准库迷你 DOM `htmldom.py` 重写（v3.0.1 原版依赖 bs4，本机不可用；保持交付子系统零第三方依赖）** |
+| `build_editable.py` | **删除**（旧 HE block 注入器） |
+| `validate_non_interference.py` | 字节级 → 结构级等价（剥离注入属性+artifact 后 tree_equal） |
+| `validate_motion_visibility_safety.py`（新） | base+editable 双侧 motion 风险校验；base FAIL = 交付 BLOCKED |
+| `validate_editor.py` | 新标记/禁用模式（网络/AI/motion 耦合）；运行时冒烟适配新编辑器 |
+| `editor/` | v3.0.1 运行时移植（按钮加 id；干净导出补剥 data-motion-reveal） |
+| 契约 | `editor-contract.md` 重写为 V2.0（Namespace/权限/台账/8 条 Gate） |
+
+不变的东西：`finalize_delivery.py` 唯一入口、三指纹 Delivery Gate、
+base SHA 冻结、M1-3 漂移留痕、M1-1 三条硬规则。基线全绿（见
+`tests/BASELINE-M1.md` 末节）。
+
+### 已知边界（诚实记录）
+
+- 结构级证明依赖解析器归一化：极端不良构 HTML 的隐式标签语义可能不被
+  保留（htmldom 实现了常见隐式闭合 p/li/td/tr 等；要求 base 为良构 HTML）。
+- v3.0.1 面板文字编辑是 textContent 整段替换（行内标记会丢）；无全局
+  font-family 字段——两者是 V2.1 的小步增量候选，不再是天花板问题。
+- motion 校验对 base 的 BLOCKED 语义是新增的交付拦截（v3.0.1 同款）：
+  生成期 QA 应在此前拦截，这里兜底。
+- Playwright 运行时冒烟在本机 SKIPPED；交互行为待全链路审计人工确认。

@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """M1-4 baseline: deterministic PostProcess delivery chain audit.
 
+Editor V2.0 (compile-time annotation) assertions replace the V1.x
+byte-strip check with structural namespace checks:
+  - editable carries data-edit-id / module / authority / motion markers
+  - base stays free of the whole editor namespace
+  - embedded meta ledger matches the base SHA and positive counts
+  - hand-written editable drift is still overwritten deterministically
+    with a persistent rebuild_reason trace (M1-3)
+
 Scenarios
   happy — fresh output root, run finalizer once, expect all delivery gates PASS.
   drift — simulate Phase 10 execution drift: hand-written editable, missing
           fingerprints, run-state wrongly claims DELIVERED; re-run finalizer
           (what Phase 11 Artifact Reality Check should trigger) and verify the
-          deterministic rebuild restores valid delivery.
-  isolation (cross-cutting) — base report SHA never changes; editable strips
-          back to byte-identical base after removing the injected HE block.
+          deterministic rebuild restores valid delivery with a trace.
 
 Usage
   python tests/postprocess_baseline.py [--workdir DIR] [--keep]
@@ -20,7 +26,17 @@ from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 FINALIZER = SKILL_ROOT / 'postprocess' / 'scripts' / 'finalize_delivery.py'
 FIXTURE = Path(__file__).resolve().parent / 'fixtures' / 'report.html'
-HE_BLOCK = re.compile(r'\n?<!-- HE_POSTPROCESS_BEGIN -->.*?<!-- HE_POSTPROCESS_END -->\n?', re.S)
+META_RE = re.compile(r'<script id="human-edit-meta" type="application/json">(.*?)</script>', re.S)
+
+AUTHORITY_MAP = {
+    'schema_version': '1.0',
+    'targets': [
+        {'du': 'DU002', 'contains_text': '关系 R01', 'authority': 'locked-fact', 'obligation_refs': ['C002.R01']},
+    ],
+    'modules': [
+        {'selector': "section[data-du='DU003']", 'movable': True},
+    ],
+}
 
 
 def sha(p: Path) -> str:
@@ -37,6 +53,8 @@ def make_root(base: Path, name: str) -> Path:
         'current_status': 'POSTPROCESS_REQUIRED',
         'postprocess_required': True,
     }, ensure_ascii=False, indent=2), encoding='utf-8')
+    (root / 'workspace' / 'editable-authority-map.json').write_text(
+        json.dumps(AUTHORITY_MAP, ensure_ascii=False, indent=2), encoding='utf-8')
     return root
 
 
@@ -56,14 +74,25 @@ def read_json(p: Path) -> dict:
     return json.loads(p.read_text(encoding='utf-8')) if p.exists() else {}
 
 
+def extract_meta(editable_text: str) -> dict:
+    m = META_RE.search(editable_text)
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(1))
+    except Exception:
+        return {}
+
+
 def gates(root: Path, base_sha: str) -> dict:
     ed = root / 'editable' / 'report-editable.html'
     status = read_json(root / 'editable' / 'postprocess-status.json')
     rs = read_json(root / 'workspace' / 'run-state.json')
-    stripped_ok = False
-    if ed.exists():
-        stripped = HE_BLOCK.sub('', ed.read_text(encoding='utf-8'), count=1)
-        stripped_ok = stripped.encode('utf-8') == (root / 'report.html').read_bytes()
+    base_text = (root / 'report.html').read_text(encoding='utf-8')
+    ed_text = ed.read_text(encoding='utf-8') if ed.exists() else ''
+    meta = extract_meta(ed_text)
+    base_markers = ('data-edit-id=', 'data-edit-module-id=', 'data-motion-reveal',
+                    'human-edit-ledger', 'he-editor-script', 'data-edit-authority')
     return {
         'editable_exists': ed.exists(),
         'result_json_exists': (root / 'editable' / 'editor-validation-result.json').exists(),
@@ -75,7 +104,24 @@ def gates(root: Path, base_sha: str) -> dict:
         'delivery_gate_status': rs.get('delivery_gate_status'),
         'run_state_status': rs.get('current_status'),
         'rebuild_reason_in_run_state': rs.get('rebuild_reason'),
-        'strip_editable_equals_base': stripped_ok,
+        'editor_v2': {
+            'editable_annotated': ed_text.count('data-edit-id=') >= 5,
+            'modules_annotated': ed_text.count('data-edit-module-id=') >= 3,
+            'runtime_embedded': 'id="he-editor-script"' in ed_text and 'id="human-edit-ledger"' in ed_text,
+            'base_unpolluted': not any(m in base_text for m in base_markers),
+            'motion_reveal_annotated': 'data-motion-reveal' in ed_text and 'data-motion-reveal' not in base_text,
+            'locked_target_present': 'data-edit-authority="locked-fact"' in ed_text,
+            'movable_module_present': 'data-edit-movable="true"' in ed_text,
+            'meta_sha_matches_base': meta.get('base_report_sha256') == base_sha,
+            'meta_counts_positive': bool(meta) and meta.get('editable_elements', 0) > 0
+                                    and meta.get('editable_modules', 0) > 0
+                                    and meta.get('locked_targets', 0) >= 1
+                                    and meta.get('motion_reveal_elements', 0) >= 1,
+        },
+        'structural_equivalence_pass': (status.get('non_interference') or {}).get('status') == 'PASS',
+        'motion_visibility_pass': all(
+            (status.get('motion_visibility') or {}).get(k, {}).get('status') == 'PASS'
+            for k in ('base', 'editable')),
     }
 
 
@@ -127,14 +173,18 @@ def main() -> int:
         'gates': gates(drift, base_sha),
     }
 
+    happy_gates = out['happy']['gates']
+    drift_gates = out['drift']['gates']
     out['summary'] = {
-        'happy_delivery_gate': out['happy']['gates']['delivery_gate_status'],
-        'drift_recovery_delivery_gate': out['drift']['gates']['delivery_gate_status'],
+        'happy_delivery_gate': happy_gates['delivery_gate_status'],
+        'drift_recovery_delivery_gate': drift_gates['delivery_gate_status'],
         'base_untouched_all_scenarios': all(
-            g['base_sha_unchanged'] and g['strip_editable_equals_base']
-            for g in (out['happy']['gates'], out['drift']['gates'])
-        ),
-        'drift_overwrite_trace_recorded': bool(out['drift']['gates']['rebuild_reason_in_run_state']),
+            g['base_sha_unchanged'] for g in (happy_gates, drift_gates)),
+        'drift_overwrite_trace_recorded': bool(drift_gates['rebuild_reason_in_run_state']),
+        'editor_v2_annotation_ok': all(happy_gates['editor_v2'].values()),
+        'editor_v2_recovery_ok': all(drift_gates['editor_v2'].values()),
+        'structural_equivalence_pass': happy_gates['structural_equivalence_pass'] and drift_gates['structural_equivalence_pass'],
+        'motion_visibility_pass': happy_gates['motion_visibility_pass'] and drift_gates['motion_visibility_pass'],
     }
     print(json.dumps(out, ensure_ascii=False, indent=2))
 

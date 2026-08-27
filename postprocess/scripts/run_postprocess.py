@@ -32,20 +32,31 @@ def main():
     base = Path(a.input).resolve()
     out = Path(a.output).resolve()
     here = Path(__file__).resolve().parent
+    editor_dir = here.parent / 'editor'
     before = sha(base)
     result_path = Path(a.result_json).resolve() if a.result_json else None
     try:
-        build = json.loads(run([sys.executable, str(here/'build_editable.py'), '--input', str(base), '--output', str(out)]))
+        # Optional authority map: <output-root>/workspace/editable-authority-map.json
+        authority_map = out.resolve().parent.parent / 'workspace' / 'editable-authority-map.json'
+        inject_cmd = [sys.executable, str(here/'inject_editor.py'), '--input', str(base), '--output', str(out), '--editor-dir', str(editor_dir)]
+        if authority_map.exists():
+            inject_cmd += ['--authority-map', str(authority_map)]
+
+        build = json.loads(run(inject_cmd))
         non = json.loads(run([sys.executable, str(here/'validate_non_interference.py'), '--base', str(base), '--editable', str(out), '--expected-base-sha', before, '--static-only']))
-        editor = json.loads(run([sys.executable, str(here/'validate_editor.py'), '--html', str(out), '--static-only']))
-        if non.get('status') != 'PASS' or editor.get('status') != 'PASS':
-            raise RuntimeError('mandatory static validation failed')
+        editor = json.loads(run([sys.executable, str(here/'validate_editor.py'), '--html', str(out), '--editor-js', str(editor_dir/'editor.js'), '--static-only']))
+        motion_base = json.loads(run([sys.executable, str(here/'validate_motion_visibility_safety.py'), '--html', str(base)]))
+        motion_editable = json.loads(run([sys.executable, str(here/'validate_motion_visibility_safety.py'), '--html', str(out), '--editable']))
+        required_pass = [non, editor, motion_base, motion_editable]
+        if any(d.get('status') != 'PASS' for d in required_pass):
+            failed = [d.get('file', k) for k, d in zip(['non_interference', 'editor', 'motion_base', 'motion_editable'], required_pass) if d.get('status') != 'PASS']
+            raise RuntimeError(f'mandatory static validation failed: {failed}')
 
         runtime = {'mode': a.runtime_qa, 'non_interference': {'status': 'SKIPPED'}, 'editor': {'status': 'SKIPPED'}}
         runtime_warning = False
         if a.runtime_qa != 'off':
-            runtime['non_interference'] = try_runtime([sys.executable, str(here/'validate_non_interference.py'), '--base', str(base), '--editable', str(out), '--expected-base-sha', before], timeout=25)
-            runtime['editor'] = try_runtime([sys.executable, str(here/'validate_editor.py'), '--html', str(out)], timeout=25)
+            runtime['non_interference'] = try_runtime([sys.executable, str(here/'validate_non_interference.py'), '--base', str(base), '--editable', str(out), '--expected-base-sha', before], timeout=30)
+            runtime['editor'] = try_runtime([sys.executable, str(here/'validate_editor.py'), '--html', str(out), '--editor-js', str(editor_dir/'editor.js')], timeout=40)
             states = [runtime['non_interference']['status'], runtime['editor']['status']]
             runtime_warning = any(s not in ('PASS', 'SKIPPED') for s in states)
             if a.runtime_qa == 'required' and runtime_warning:
@@ -64,6 +75,7 @@ def main():
             'build': build,
             'non_interference': non,
             'editor_validation': editor,
+            'motion_visibility': {'base': motion_base, 'editable': motion_editable},
             'runtime_qa': runtime,
         }
         payload = json.dumps(result, ensure_ascii=False, indent=2)

@@ -18,7 +18,7 @@ def update_run_state(root: Path, result: dict, mode: str):
     if not rs.exists():
         return
     data = load_json(rs)
-    data['postprocess_extension_version'] = 'Editor Postprocess V1.1'
+    data['postprocess_extension_version'] = 'Editor Postprocess V2.0 (compile-time annotation)'
     data['postprocess_status'] = result.get('status', 'FAIL')
     data['postprocess_dispatch_mode'] = mode
     data['editable_output_path'] = 'editable/report-editable.html'
@@ -30,14 +30,14 @@ def append_analysis(root: Path, result: dict, mode: str):
     if not p.exists():
         return
     txt = p.read_text(encoding='utf-8')
-    marker = '## Post-Generation Editor Extension V1.1'
+    marker = '## Post-Generation Editor Extension V2.0'
     if marker in txt:
         return
     status = result.get('status', 'FAIL')
     section = (
         f"\n\n{marker}\n\n"
         "```yaml\n"
-        "postprocess_extension: Editor Postprocess V1.1\n"
+        "postprocess_extension: Editor Postprocess V2.0 (compile-time annotation)\n"
         f"postprocess_status: {status}\n"
         f"postprocess_dispatch_mode: {mode}\n"
         "editable_output: editable/report-editable.html\n"

@@ -1,27 +1,203 @@
-:host{all:initial;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#111}
-*{box-sizing:border-box}
-button,input,select,textarea{font:inherit}
-.he-launcher{position:fixed;right:20px;bottom:20px;z-index:2147483647;border:0;border-radius:999px;padding:10px 14px;background:#111;color:#fff;box-shadow:0 8px 28px rgba(0,0,0,.22);cursor:pointer;font-size:13px;line-height:1}
-.he-panel{position:fixed;right:20px;bottom:68px;z-index:2147483647;width:330px;max-height:min(78vh,720px);overflow:auto;background:#fff;color:#171717;border:1px solid #d9d9d9;border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.24);display:none}
-.he-panel.open{display:block}
-.he-head{position:sticky;top:0;background:#fff;border-bottom:1px solid #ececec;padding:12px 14px;display:flex;align-items:center;gap:8px;z-index:2}
-.he-title{font-weight:700;font-size:13px;flex:1}
-.he-badge{font-size:11px;padding:2px 7px;border-radius:999px;background:#f0f0f0;color:#555}
-.he-body{padding:12px 14px 14px}
-.he-section{padding:10px 0;border-bottom:1px solid #eee}
-.he-section:last-child{border-bottom:0}
-.he-label{font-size:11px;color:#666;margin-bottom:5px;display:block}
-.he-value{font-size:12px;color:#222;word-break:break-all;background:#f7f7f7;border-radius:6px;padding:6px 8px;min-height:28px}
-.he-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-.he-row.one{grid-template-columns:1fr}
-.he-input,.he-select,.he-textarea{width:100%;border:1px solid #d7d7d7;border-radius:6px;background:#fff;color:#111;padding:7px 8px;font-size:12px;outline:none}
-.he-textarea{min-height:68px;resize:vertical;line-height:1.45}
-.he-input:focus,.he-select:focus,.he-textarea:focus{border-color:#111}
-.he-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-.he-btn{border:1px solid #d4d4d4;background:#fff;color:#111;border-radius:6px;padding:6px 9px;font-size:11.5px;cursor:pointer}
-.he-btn:hover{background:#f3f3f3}
-.he-btn.primary{background:#111;color:#fff;border-color:#111}
-.he-btn.danger{color:#a31d1d}
-.he-btn:disabled{cursor:default;color:#aaa;background:#f8f8f8}
-.he-note{font-size:11px;line-height:1.55;color:#777;margin-top:6px}
-.he-status{font-size:11px;line-height:1.5;color:#555;margin-top:7px;padding:6px 8px;background:#f7f7f7;border-radius:6px}
+/* Human Interactive Editing Layer — runtime UI only.
+   This stylesheet is injected ONLY into editable/index.html. */
+:root {
+  --he-accent: #2563eb;
+  --he-accent-soft: rgba(37, 99, 235, .12);
+  --he-warn: #b45309;
+  --he-panel: #ffffff;
+  --he-ink: #111827;
+  --he-muted: #6b7280;
+  --he-line: #d1d5db;
+  --he-shadow: 0 16px 44px rgba(0,0,0,.16);
+}
+
+#he-launcher,
+#he-toolbar,
+#he-panel,
+#he-confirm,
+.he-module-tag { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif !important; }
+
+#he-launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483000;
+  border: 0;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  padding: 11px 17px;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: var(--he-shadow);
+  cursor: pointer;
+}
+
+#he-toolbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2147483002;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 50px;
+  padding: 7px 12px;
+  background: #111827;
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0,0,0,.18);
+}
+
+.he-editing #he-toolbar { display: flex; }
+.he-editing #he-launcher { display: none; }
+.he-editing { padding-top: 50px !important; }
+
+#he-toolbar .he-title { font-weight: 800; margin-right: 6px; white-space: nowrap; }
+#he-toolbar .he-status { color: #cbd5e1; font-size: 12px; margin-right: auto; min-width: 160px; }
+#he-toolbar button,
+#he-panel button,
+#he-confirm button {
+  appearance: none;
+  border: 1px solid #374151;
+  background: #1f2937;
+  color: #fff;
+  border-radius: 6px;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#he-toolbar button:hover,
+#he-panel button:hover,
+#he-confirm button:hover { background: #374151; }
+#he-toolbar button:disabled,
+#he-panel button:disabled { opacity: .45; cursor: not-allowed; }
+#he-toolbar .he-primary,
+#he-panel .he-primary,
+#he-confirm .he-primary { background: var(--he-accent); border-color: var(--he-accent); }
+#he-toolbar .he-danger,
+#he-panel .he-danger { background: #991b1b; border-color: #991b1b; }
+
+#he-panel {
+  position: fixed;
+  top: 58px;
+  right: 12px;
+  z-index: 2147483001;
+  display: none;
+  width: min(350px, calc(100vw - 24px));
+  max-height: calc(100vh - 72px);
+  overflow: auto;
+  background: var(--he-panel);
+  color: var(--he-ink);
+  border: 1px solid var(--he-line);
+  border-radius: 10px;
+  box-shadow: var(--he-shadow);
+}
+.he-editing #he-panel { display: block; }
+
+#he-panel .he-panel-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 13px 14px;
+  background: #f9fafb;
+  border-bottom: 1px solid var(--he-line);
+}
+#he-panel .he-kicker { font-size: 10px; letter-spacing: .14em; color: var(--he-muted); font-weight: 800; }
+#he-panel .he-selection { margin-top: 3px; font-size: 14px; font-weight: 800; word-break: break-all; }
+#he-panel .he-authority { margin-top: 6px; font-size: 11px; color: var(--he-muted); }
+#he-panel .he-authority.warn { color: var(--he-warn); font-weight: 700; }
+#he-panel .he-section { padding: 13px 14px; border-bottom: 1px solid #e5e7eb; }
+#he-panel .he-section:last-child { border-bottom: 0; }
+#he-panel .he-section h4 { margin: 0 0 9px !important; font: 800 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; color: #374151 !important; }
+#he-panel label { display: grid; gap: 5px; margin: 9px 0; font-size: 11px; color: #4b5563; font-weight: 700; }
+#he-panel textarea,
+#he-panel select,
+#he-panel input[type="text"],
+#he-panel input[type="color"] {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  padding: 7px 8px;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+#he-panel textarea { min-height: 92px; resize: vertical; }
+#he-panel .he-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#he-panel .he-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+#he-panel .he-note { margin: 7px 0 0; font-size: 10.5px; line-height: 1.55; color: var(--he-muted); }
+
+.he-editing [data-edit-module-id] { position: relative; }
+.he-editing [data-edit-module-id]:hover { outline: 1.5px dashed rgba(37,99,235,.7); outline-offset: 4px; }
+.he-editing [data-edit-module-id].he-selected-module { outline: 2px solid var(--he-accent) !important; outline-offset: 5px; }
+.he-editing [data-edit-id] { cursor: text; }
+.he-editing [data-edit-id]:hover { box-shadow: inset 0 -2px 0 rgba(37,99,235,.35); }
+.he-editing [data-edit-id].he-selected-element { box-shadow: inset 0 -3px 0 var(--he-accent) !important; }
+.he-editing [data-edit-id][contenteditable="true"]:focus { outline: 2px solid var(--he-accent); outline-offset: 2px; background: rgba(255,255,255,.94); }
+
+.he-module-tag {
+  position: absolute;
+  display: none;
+  top: -23px;
+  left: -1px;
+  z-index: 2147482000;
+  padding: 2px 7px;
+  border-radius: 4px 4px 0 0;
+  background: var(--he-accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  pointer-events: none;
+}
+.he-editing .he-selected-module > .he-module-tag { display: block; }
+
+#he-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0,0,0,.46);
+}
+#he-confirm.he-open { display: flex; }
+#he-confirm .he-confirm-card {
+  width: min(460px, 100%);
+  background: #fff;
+  color: #111827;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: var(--he-shadow);
+}
+#he-confirm h3 { margin: 0 0 8px !important; font: 800 18px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; color: #111827 !important; }
+#he-confirm p { margin: 0 0 14px !important; font: 13px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important; color: #4b5563 !important; }
+#he-confirm .he-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 760px) {
+  #he-toolbar { gap: 5px; }
+  #he-toolbar .he-status { display: none; }
+  #he-panel { top: auto; bottom: 10px; right: 10px; left: 10px; width: auto; max-height: 48vh; }
+  .he-editing { padding-top: 92px !important; }
+}
+
+
+/* ===== V3.0.1 Motion Visibility Safety =====
+   Human edit mode suppresses reveal-hidden states so every editable semantic
+   carrier remains visible. This does not alter the clean/base report. */
+body.he-editing [data-motion-reveal],
+body.he-editing .rv,
+body.he-editing .reveal,
+body.he-editing .b-in {
+  opacity: 1 !important;
+  visibility: visible !important;
+  transform: none !important;
+  animation: none !important;
+  transition: none !important;
+}

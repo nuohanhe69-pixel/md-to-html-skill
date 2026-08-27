@@ -8,21 +8,35 @@
   body{font-family:sans-serif;margin:40px auto;max-width:800px;line-height:1.7}
   table{border-collapse:collapse;width:100%}
   td,th{border:1px solid #ccc;padding:8px}
+  .rv{transition:opacity .5s}
+  .js .rv{opacity:0}
+  .motion-ready .rv{opacity:1}
+  @media (prefers-reduced-motion: reduce){ .rv{opacity:1;transition:none} }
 </style>
 </head>
 <body>
-  <header><h1>语义覆盖基线报告</h1><p>DU001 · C001.F01 · 确定性交付链夹具</p></header>
+  <header data-du="DU001">
+    <h1>语义覆盖基线报告</h1>
+    <p>DU001 · C001.F01 · 确定性交付链夹具</p>
+  </header>
   <main>
-    <section><h2>1 内容链</h2><p>事实 F01：基线夹具包含三个语义单元与一张源表。</p></section>
-    <section><h2>2 关系链</h2><p>关系 R01：Raw Markdown → DIP → Report → Editable。</p></section>
-    <section><h2>3 源表</h2>
+    <section data-du="DU002">
+      <h2>1 内容链</h2>
+      <p>事实 F01：基线夹具包含三个语义单元与一张源表。</p>
+      <p>关系 R01：Raw Markdown → DIP → Report → Editable。</p>
+      <p class="rv">动效语义承载：此段默认由 motion reveal 控制，编辑模式必须强制可见。</p>
+    </section>
+    <section data-du="DU003">
+      <h2>2 源表</h2>
       <table>
         <tr><th>Gate</th><th>期望</th></tr>
         <tr><td>base_sha_before == base_sha_after</td><td>TRUE</td></tr>
-        <tr><td>strip(editable) == base bytes</td><td>TRUE</td></tr>
+        <tr><td>structural equivalence after strip</td><td>TRUE</td></tr>
       </table>
     </section>
   </main>
-  <footer><p>DU003 · Generated fixture, not a real V2.9 artifact.</p></footer>
+  <footer data-du="DU004">
+    <p>DU004 · Generated fixture, not a real V2.9 artifact.</p>
+  </footer>
 </body>
 </html>

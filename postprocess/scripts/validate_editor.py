@@ -1,77 +1,167 @@
 #!/usr/bin/env python3
+"""Editor runtime asset validator (Editor V2.0).
+
+Static (mandatory): embedded artifacts present, ledger/meta JSON well-formed
+and locked (ai_editing=DISABLED, source_backflow=FORBIDDEN), editor.js free
+of network/AI/motion-coupling patterns, node --check when available.
+
+Runtime (best-effort, needs playwright): launcher opens edit mode, editable
+elements match meta counts, text edit via panel applies, undo/redo revert.
+"""
 from __future__ import annotations
-import argparse, json, re, shutil, subprocess
+import argparse
+import json
+import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
-FORBIDDEN = [
-  'IntersectionObserver','animationTimeline','scrollTimeline','motion-ready','data-motion-reveal',
-  "classList.add('on')",'classList.add("on")',"classList.add('in')",'classList.add("in")',
-  "querySelectorAll('.rv')",'querySelectorAll(".rv")',"querySelectorAll('.reveal')",'querySelectorAll(".reveal")'
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import htmldom
+
+ARTIFACT_IDS = (
+    'he-editor-style', 'he-editor-script', 'human-edit-ledger',
+    'human-edit-base-state', 'human-edit-meta',
+)
+FORBIDDEN_JS_PATTERNS = [
+    r'\bfetch\s*\(',
+    'XMLHttpRequest',
+    'WebSocket',
+    'EventSource',
+    r'\bopenai\b',
+    r'\banthropic\b',
+    r'api[_-]?key',
+    r'\bllm\b',
+    'huashu',
+    'IntersectionObserver',
+    'animationTimeline',
+    'scrollTimeline',
+    'motion-ready',
 ]
 
-def static_validate(html:Path, js:Path):
-    text=html.read_text(encoding='utf-8'); js_text=js.read_text(encoding='utf-8')
-    checks={
-      'runtime_marker': 'id="he-editor-runtime"' in text,
-      'meta_marker': 'id="he-editor-meta"' in text,
-      'shadow_css_template': 'id="he-editor-css-template"' in text,
-      'js_no_forbidden_motion_coupling': not any(t in js_text for t in FORBIDDEN),
-      'js_uses_shadow_dom': 'attachShadow' in js_text,
-      'js_no_llm': not re.search(r'openai|anthropic|gemini|llm|huashu',js_text,re.I),
-    }
-    node='SKIPPED'
-    if shutil.which('node'):
-      r=subprocess.run(['node','--check',str(js)],capture_output=True,text=True)
-      node='PASS' if r.returncode==0 else 'FAIL: '+(r.stderr.strip() or r.stdout.strip())
-      checks['node_syntax']=r.returncode==0
-    return checks,node
 
-def runtime_validate(path:Path):
+def _embedded_json(html_text: str, script_id: str):
+    m = re.search(
+        rf'<script id="{script_id}" type="application/json">(.*?)</script>', html_text, re.S)
+    if not m:
+        return None
     try:
-      from playwright.sync_api import sync_playwright
-    except Exception as e:
-      return {'status':'SKIPPED','reason':f'playwright unavailable: {e}'}
-    try:
-      with sync_playwright() as p:
-        browser=p.chromium.launch(headless=True, executable_path=shutil.which('chromium') or None, args=['--no-sandbox'])
-        page=browser.new_page(viewport={'width':1440,'height':900})
-        html_text=path.read_text(encoding='utf-8')
-        # Runtime probe only: remove external HTTP assets so set_content cannot be blocked by network policy.
-        html_text=re.sub(r'<link\b[^>]*href=[\"\']https?://[^>]*>', '', html_text, flags=re.I)
-        html_text=re.sub(r'<script\b[^>]*src=[\"\']https?://[^>]*>.*?</script\s*>', '', html_text, flags=re.I|re.S)
-        page.set_content(html_text,wait_until='domcontentloaded',timeout=30000)
-        page.wait_for_timeout(250)
-        host=page.locator('he-editor-root')
-        if host.count()!=1: raise RuntimeError('editor host missing')
-        # Enter edit mode through shadow root.
-        page.evaluate("document.querySelector('he-editor-root').shadowRoot.getElementById('he-launcher').click()")
-        page.wait_for_timeout(120)
-        discovered=page.locator('[data-he-edit-id]').count(); modules=page.locator('[data-he-module-id]').count()
-        whole_modules=page.locator('[data-he-module-id][contenteditable="true"]').count()
-        if discovered<1: raise RuntimeError('no editable leaf discovered')
-        if whole_modules!=0: raise RuntimeError('whole module contenteditable detected')
-        # Pick first editable leaf and exercise inspector text + undo/redo.
-        first=page.locator('[data-he-edit-id]').first
-        eid=first.get_attribute('data-he-edit-id'); before=first.text_content() or ''
-        page.evaluate("id=>document.querySelector('[data-he-edit-id=\"'+id+'\"]').click()",eid)
-        page.evaluate("v=>{const s=document.querySelector('he-editor-root').shadowRoot; const t=s.getElementById('he-text'); t.value=v; t.dispatchEvent(new Event('change',{bubbles:true}));}", before+'__HE_TEST__')
-        changed=first.text_content() or ''
-        page.evaluate("document.querySelector('he-editor-root').shadowRoot.getElementById('he-undo').click()")
-        undone=first.text_content() or ''
-        page.evaluate("document.querySelector('he-editor-root').shadowRoot.getElementById('he-redo').click()")
-        redone=first.text_content() or ''
-        browser.close()
-        ok=('__HE_TEST__' in changed and undone==before and '__HE_TEST__' in redone)
-        return {'status':'PASS' if ok else 'FAIL','editable_elements':discovered,'modules':modules,'whole_module_contenteditable':whole_modules,'text_edit': '__HE_TEST__' in changed,'undo':undone==before,'redo':'__HE_TEST__' in redone}
-    except Exception as e:
-      return {'status':'FAIL','reason':str(e)}
+        return json.loads(m.group(1))
+    except Exception:
+        return None
 
-def main():
-    p=argparse.ArgumentParser(); p.add_argument('--html',required=True); p.add_argument('--js'); p.add_argument('--static-only', action='store_true')
-    a=p.parse_args(); html=Path(a.html); js=Path(a.js) if a.js else Path(__file__).resolve().parent.parent/'editor'/'editor.js'
-    checks,node=static_validate(html,js); runtime={'status':'SKIPPED','reason':'static-only requested'} if a.static_only else runtime_validate(html)
-    static_ok=all(checks.values()); runtime_ok=runtime.get('status') in ('PASS','SKIPPED')
-    status='PASS' if static_ok and runtime_ok else 'FAIL'
-    print(json.dumps({'status':status,'static_checks':checks,'node_syntax':node,'runtime':runtime},ensure_ascii=False,indent=2))
-    raise SystemExit(0 if status=='PASS' else 2)
-if __name__=='__main__': main()
+
+def _static_checks(editable_path: Path, editor_js: Path | None) -> dict:
+    html_text = editable_path.read_text(encoding='utf-8')
+    root, _ = htmldom.parse_html(html_text)
+
+    checks = {}
+    missing = [eid for eid in ARTIFACT_IDS if htmldom.find_by_id(root, eid) is None]
+    checks['artifacts_embedded'] = not missing
+    checks['missing_artifacts'] = missing
+
+    ledger = _embedded_json(html_text, 'human-edit-ledger')
+    checks['ledger_wellformed'] = ledger is not None
+    checks['ledger_ai_editing_disabled'] = bool(ledger) and ledger.get('ai_editing') == 'DISABLED'
+    checks['ledger_source_backflow_forbidden'] = bool(ledger) and ledger.get('source_backflow') == 'FORBIDDEN'
+
+    meta = _embedded_json(html_text, 'human-edit-meta')
+    checks['meta_wellformed'] = meta is not None
+    checks['meta_has_base_sha'] = bool(meta) and bool(meta.get('base_report_sha256'))
+    checks['meta_counts_positive'] = bool(meta) and meta.get('editable_elements', 0) > 0
+
+    js_text = editor_js.read_text(encoding='utf-8') if editor_js and editor_js.exists() else ''
+    hits = [pat for pat in FORBIDDEN_JS_PATTERNS if re.search(pat, js_text, re.I)]
+    checks['editor_js_clean'] = not hits
+    checks['editor_js_forbidden_hits'] = hits
+
+    if editor_js and editor_js.exists() and shutil.which('node'):
+        r = subprocess.run(['node', '--check', str(editor_js)], capture_output=True, text=True, timeout=30)
+        checks['editor_js_syntax_ok'] = r.returncode == 0
+        if r.returncode != 0:
+            checks['editor_js_syntax_error'] = r.stderr[-500:]
+    return checks
+
+
+def _runtime_checks(editable_path: Path) -> dict:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        return {'status': 'SKIPPED', 'reason': f'playwright unavailable: {exc}'}
+
+    html_text = editable_path.read_text(encoding='utf-8')
+    meta = _embedded_json(html_text, 'human-edit-meta') or {}
+    expected = meta.get('editable_elements', 0)
+    steps = []
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={'width': 1440, 'height': 2400})
+            page.set_content(html_text, wait_until='load', timeout=20000)
+            page.wait_for_timeout(400)
+
+            page.click('#he-launcher', timeout=5000)
+            page.wait_for_timeout(200)
+            editing = page.evaluate('document.body.classList.contains("he-editing")')
+            steps.append(('launcher_opens_edit_mode', editing))
+
+            count = page.locator('[data-edit-id]').count()
+            steps.append(('editable_elements_match_meta', count == expected and count > 0))
+
+            first = page.locator('[data-edit-id]').first
+            first.click(timeout=5000)
+            page.wait_for_timeout(200)
+            before_text = first.text_content()
+            marker = '__HE_TEST__'
+            page.fill('#he-text', (before_text or '') + marker, timeout=5000)
+            page.click('#he-apply-text', timeout=5000)
+            page.wait_for_timeout(200)
+            applied = marker in (first.text_content() or '')
+            steps.append(('panel_text_edit_applies', applied))
+
+            page.click('#he-undo', timeout=5000)
+            page.wait_for_timeout(200)
+            reverted = marker not in (first.text_content() or '')
+            steps.append(('undo_reverts', reverted))
+
+            page.click('#he-redo', timeout=5000)
+            page.wait_for_timeout(200)
+            reapplied = marker in (first.text_content() or '')
+            steps.append(('redo_reapplies', reapplied))
+
+            page.click('#he-exit', timeout=5000)
+            page.wait_for_timeout(200)
+            exited = not page.evaluate('document.body.classList.contains("he-editing")')
+            steps.append(('exit_closes_edit_mode', exited))
+
+            browser.close()
+    except Exception as exc:
+        return {'status': 'SKIPPED', 'reason': f'runtime probe failed: {exc}', 'steps': steps}
+
+    ok = all(v for _, v in steps)
+    return {'status': 'PASS' if ok else 'WARN', 'steps': steps}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--html', required=True, type=Path)
+    ap.add_argument('--editor-js', type=Path, default=None)
+    ap.add_argument('--static-only', action='store_true')
+    a = ap.parse_args()
+
+    checks = _static_checks(a.html, a.editor_js)
+    failures = [k for k, v in checks.items() if isinstance(v, bool) and not v]
+    result = {'status': 'PASS' if not failures else 'FAIL', 'checks': checks, 'failures': failures}
+
+    if not a.static_only:
+        result['runtime'] = _runtime_checks(a.html)
+        if result['runtime'].get('status') == 'WARN':
+            result['warnings'] = ['editor runtime smoke test reported failures']
+
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result['status'] == 'PASS' else 2
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

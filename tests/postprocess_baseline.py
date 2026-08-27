@@ -34,7 +34,7 @@ AUTHORITY_MAP = {
         {'du': 'DU002', 'contains_text': '关系 R01', 'authority': 'locked-fact', 'obligation_refs': ['C002.R01']},
     ],
     'modules': [
-        {'selector': "section[data-du='DU003']", 'movable': True},
+        {'selector': "section[data-du-id='DU003']", 'movable': True},
     ],
 }
 
@@ -173,18 +173,68 @@ def main() -> int:
         'gates': gates(drift, base_sha),
     }
 
+    # Generation-side boundary violation: the model pre-wrote an editor
+    # attribute into the base report. PostProcess must refuse (never repair),
+    # block delivery, and leave the base byte-identical.
+    contam = make_root(work, 'scenario-contaminated')
+    report = contam / 'report.html'
+    report.write_text(
+        report.read_text(encoding='utf-8').replace(
+            '<h2>1 内容链</h2>', '<h2 data-edit-id="PAGE.h2.001">1 内容链</h2>'),
+        encoding='utf-8')
+    contam_sha = sha(report)
+    out['contaminated'] = {
+        'finalizer_status': run_finalizer(contam).get('status'),
+        'gates': gates(contam, contam_sha),
+    }
+    rs = read_json(contam / 'workspace' / 'run-state.json')
+    out['contaminated']['refusal_recorded'] = 'Artifact Boundary' in (rs.get('last_artifact_failure') or '')
+
+    # Sentinel: module capability silently lost in the editable (module attrs
+    # stripped) while the base still carries data-du-id modules — the
+    # module_capability_present gate must FAIL.
+    sentinel_dir = work / 'sentinel'
+    sentinel_dir.mkdir()
+    ed = (happy / 'editable' / 'report-editable.html').read_text(encoding='utf-8')
+    stripped = re.sub(r'\s+(?:data-edit-module-id|data-edit-movable)="[^"]*"', '', ed)
+    (sentinel_dir / 'editable.html').write_text(stripped, encoding='utf-8')
+    (sentinel_dir / 'base.html').write_bytes(FIXTURE.read_bytes())
+    r = subprocess.run(
+        [sys.executable, str(SKILL_ROOT / 'postprocess' / 'scripts' / 'validate_non_interference.py'),
+         '--base', str(sentinel_dir / 'base.html'),
+         '--editable', str(sentinel_dir / 'editable.html'),
+         '--expected-base-sha', base_sha, '--static-only'],
+        capture_output=True, text=True, timeout=60)
+    try:
+        ni = json.loads(r.stdout)
+    except Exception:
+        ni = {'status': 'PARSE_ERROR', 'stdout': r.stdout[-800:]}
+    out['sentinel'] = {
+        'status': ni.get('status'),
+        'module_capability_present': (ni.get('checks') or {}).get('module_capability_present'),
+        'failures': ni.get('failures'),
+    }
+
     happy_gates = out['happy']['gates']
     drift_gates = out['drift']['gates']
+    contam_gates = out['contaminated']['gates']
     out['summary'] = {
         'happy_delivery_gate': happy_gates['delivery_gate_status'],
         'drift_recovery_delivery_gate': drift_gates['delivery_gate_status'],
         'base_untouched_all_scenarios': all(
-            g['base_sha_unchanged'] for g in (happy_gates, drift_gates)),
+            g['base_sha_unchanged'] for g in (happy_gates, drift_gates, contam_gates)),
         'drift_overwrite_trace_recorded': bool(drift_gates['rebuild_reason_in_run_state']),
         'editor_v2_annotation_ok': all(happy_gates['editor_v2'].values()),
         'editor_v2_recovery_ok': all(drift_gates['editor_v2'].values()),
         'structural_equivalence_pass': happy_gates['structural_equivalence_pass'] and drift_gates['structural_equivalence_pass'],
         'motion_visibility_pass': happy_gates['motion_visibility_pass'] and drift_gates['motion_visibility_pass'],
+        'boundary_violation_refused': (
+            contam_gates['delivery_gate_status'] == 'BLOCKED'
+            and contam_gates['run_state_status'] == 'POSTPROCESS_BLOCKED'
+            and out['contaminated']['refusal_recorded']),
+        'sentinel_catches_module_loss': (
+            out['sentinel']['status'] == 'FAIL'
+            and out['sentinel']['module_capability_present'] is False),
     }
     print(json.dumps(out, ensure_ascii=False, indent=2))
 

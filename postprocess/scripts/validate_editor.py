@@ -19,11 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import htmldom
+import artifact_namespace
 
-ARTIFACT_IDS = (
-    'he-editor-style', 'he-editor-script', 'human-edit-ledger',
-    'human-edit-base-state', 'human-edit-meta',
-)
+ARTIFACT_IDS = artifact_namespace.FORBIDDEN_IDS
 FORBIDDEN_JS_PATTERNS = [
     r'\bfetch\s*\(',
     'XMLHttpRequest',

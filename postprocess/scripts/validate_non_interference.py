@@ -21,17 +21,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import htmldom
+import artifact_namespace
 from htmldom import Node, iter_elements
 
-ARTIFACT_IDS = (
-    'he-editor-style', 'he-editor-script', 'human-edit-ledger',
-    'human-edit-base-state', 'human-edit-meta',
-)
-INJECTED_ATTRS = (
-    'data-edit-id', 'data-edit-type', 'data-edit-authority',
-    'data-edit-obligation-refs', 'data-edit-module-id', 'data-edit-movable',
-    'data-motion-reveal', 'data-he-runtime-ui', 'data-human-edit-layer',
-)
+ARTIFACT_IDS = artifact_namespace.FORBIDDEN_IDS
+INJECTED_ATTRS = artifact_namespace.INJECTED_ATTRS
+DU_ATTRIBUTE = artifact_namespace.DU_ATTRIBUTE
 
 
 def sha256_of(path: Path) -> str:
@@ -41,11 +36,7 @@ def sha256_of(path: Path) -> str:
 def _has_editor_namespace(root: Node) -> list:
     hits = []
     for e in iter_elements(root):
-        if e.attrs.get('id') in ARTIFACT_IDS:
-            hits.append(f'id={e.attrs["id"]}')
-        for a in INJECTED_ATTRS:
-            if a in e.attrs:
-                hits.append(f'<{e.tag}> {a}')
+        hits.extend(artifact_namespace.element_violations(e))
     return hits
 
 
@@ -137,6 +128,15 @@ def main() -> int:
 
     checks['edit_ids_unique'] = not _id_uniqueness(editable_root, 'data-edit-id')
     checks['module_ids_unique'] = not _id_uniqueness(editable_root, 'data-edit-module-id')
+
+    # Sentinel gate: silent module-capability loss. If the base carries
+    # DU-annotated semantic carriers but the editable has zero modules,
+    # module editing was lost without any failure — e.g. an attribute-name
+    # drift between the contract and the injector.
+    du_carriers = sum(1 for e in iter_elements(base_root) if DU_ATTRIBUTE in e.attrs)
+    editable_modules = sum(1 for e in iter_elements(editable_root) if 'data-edit-module-id' in e.attrs)
+    checks['base_du_carriers'] = du_carriers
+    checks['module_capability_present'] = (du_carriers == 0) or (editable_modules > 0)
 
     _strip_injections(editable_root)
     checks['structural_equivalence'] = htmldom.tree_equal(editable_root, base_root) \

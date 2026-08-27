@@ -18,7 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import htmldom
+import artifact_namespace
 from htmldom import Node
+
+DU_ATTRIBUTE = artifact_namespace.DU_ATTRIBUTE
 
 IGNORE_CLASSES = {
     'js', 'no-js', 'motion-ready', 'in', 'on', 'visible', 'active',
@@ -59,7 +62,7 @@ def element_is_large_semantic_container(el: Node) -> bool:
     if el.tag in STRUCTURAL_TAGS:
         return True
     text_len = len(re.sub(r'\s+', ' ', htmldom.get_text(el).strip()))
-    du_count = sum(1 for d in htmldom.iter_elements(el) if 'data-du' in d.attrs)
+    du_count = sum(1 for d in htmldom.iter_elements(el) if DU_ATTRIBUTE in d.attrs)
     return text_len > 1800 or du_count >= 3
 
 
@@ -107,7 +110,7 @@ def main() -> int:
                     'id': el.attrs.get('id'),
                     'class': cls,
                     'text_chars': len(htmldom.get_text(el).strip()),
-                    'descendant_du': sum(1 for d in htmldom.iter_elements(el) if 'data-du' in d.attrs),
+                    'descendant_du': sum(1 for d in htmldom.iter_elements(el) if DU_ATTRIBUTE in d.attrs),
                 })
     evidence['large_hidden_motion_carriers'] = risky[:50]
     if risky:

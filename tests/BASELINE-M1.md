@@ -87,3 +87,23 @@ Playwright 冒烟在本机降级 SKIPPED（依赖缺失，不阻塞）。富文�
 间接证明（标注存在性 + 结构等价 + meta 计数），交互行为待全链路审计
 （见"全链路漂移审计协议"）在真实会话中人工确认。
 
+## Artifact Boundary 契约落地后复跑结果（同分支追加）
+
+改动：`artifact_namespace.py` 成为接口语法唯一源；注入器/三校验器全部
+改为 import；模块发现改用 `data-du-id`（修正 V2.0 移植时的属性名漂移）；
+新增两道执法。新增两个场景：
+
+| 场景 | 断言 | 结果 |
+|---|---|---|
+| contaminated（base 被提前写入 `data-edit-id`） | 注入器拒绝 + BLOCKED + `last_artifact_failure` 含拒绝原因 + base 逐字节不动（无静默清洗） | ✅ 全部成立 |
+| sentinel（editable 模块属性丢失 + base 有 `data-du-id` 承载体） | `module_capability_present=false` → validate_non_interference FAIL | ✅ 捕获 |
+
+原有 happy / drift 场景无回归（fixture 同步升级为契约语法
+`data-du-id` / `data-obligation-refs` / `data-source-table-id`）。
+
+> 教训记录（夹具自洽陷阱）：V2.0 移植时 fixture 用了注入器的私有字典
+> `data-du`，闭环全绿但对真实报告零模块能力且无任何报错——这正是
+> `data-du-id` vs `data-du` 漂移静默发生的机制。哨兵 Gate
+> `module_capability_present` 即为此类漂移的永久防护；今后夹具必须从
+> 契约（references/24 §13）生成，不从被测代码的假设生成。
+

@@ -25,7 +25,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import htmldom
+import artifact_namespace
 from htmldom import Node, iter_elements, make_element
+
+DU_ATTRIBUTE = artifact_namespace.DU_ATTRIBUTE
 
 EDITABLE_TAGS = {
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li', 'th', 'td',
@@ -39,15 +42,6 @@ MOTION_STATE_CLASSES = {
     'js', 'no-js', 'motion-ready', 'in', 'on', 'visible',
     'active', 'loaded', 'ready', 'he-editing',
 }
-ARTIFACT_IDS = (
-    'he-editor-style', 'he-editor-script', 'human-edit-ledger',
-    'human-edit-base-state', 'human-edit-meta',
-)
-INJECTED_ATTRS = (
-    'data-edit-id', 'data-edit-type', 'data-edit-authority',
-    'data-edit-obligation-refs', 'data-edit-module-id', 'data-edit-movable',
-    'data-motion-reveal',
-)
 
 
 def sha256_of(path: Path) -> str:
@@ -82,7 +76,7 @@ def detect_motion_reveal_classes(css: str) -> set:
 def nearest_du(node: Node) -> str:
     cur = node
     while cur is not None and cur.kind == 'element':
-        du = cur.attrs.get('data-du')
+        du = cur.attrs.get(DU_ATTRIBUTE)
         if du:
             return text_norm(du).split()[0]
         cur = cur.parent
@@ -203,10 +197,11 @@ def inject(input_html: Path, output_html: Path, editor_dir: Path,
         raise ValueError('input html must contain <head> and <body>')
 
     for e in iter_elements(root):
-        if e.attrs.get('id') in ARTIFACT_IDS:
-            raise ValueError('input already contains Human Edit Layer markers (refuse to re-inject)')
-        if 'data-edit-id' in e.attrs or 'data-edit-module-id' in e.attrs:
-            raise ValueError('input already contains edit annotations (refuse to re-inject)')
+        for hit in artifact_namespace.element_violations(e):
+            raise ValueError(
+                'input violates the Artifact Boundary Contract (delivery-plane '
+                f'namespace present in base): {hit} — refusing to inject; '
+                'the base report must be fixed upstream, PostProcess never repairs it')
 
     css_text = '\n'.join(htmldom.get_text(s) for s in iter_elements(root) if s.tag == 'style')
     motion_classes = detect_motion_reveal_classes(css_text)
@@ -218,7 +213,7 @@ def inject(input_html: Path, output_html: Path, editor_dir: Path,
 
     module_counts = {}
     for m in iter_elements(root):
-        if 'data-du' not in m.attrs:
+        if DU_ATTRIBUTE not in m.attrs:
             continue
         du = nearest_du(m)
         module_counts[du] = module_counts.get(du, 0) + 1

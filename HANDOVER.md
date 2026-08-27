@@ -313,3 +313,33 @@ base SHA 冻结、M1-3 漂移留痕、M1-1 三条硬规则。基线全绿（见
 - motion 校验对 base 的 BLOCKED 语义是新增的交付拦截（v3.0.1 同款）：
   生成期 QA 应在此前拦截，这里兜底。
 - Playwright 运行时冒烟在本机 SKIPPED；交互行为待全链路审计人工确认。
+
+### §7.1 Artifact Boundary 契约（2026-08-27 追加，同分支）
+
+用户提出"模型知道最终会有可编辑版本，可能在生成时提前写编辑字段"。
+按根因分析（拒绝症状级补丁），四个表面问题塌缩为一个根因：**report.html
+是两个平面的接口，但接口没有契约**——生产侧把接口属性当装饰（24 号
+"推荐"），消费侧当承重墙（模块系统硬依赖），且 namespace 清单在 4 处
+各自硬编码。
+
+修复（契约 + 执法，非补丁）：
+
+- `postprocess/scripts/artifact_namespace.py`：MUST / FREE / FORBIDDEN
+  三区唯一源（机器可读）；注入器与全部校验器 import，删掉 4 处私有清单；
+- `editor-contract.md` §Artifact Boundary：人读契约（Canonical Owner，
+  已登记 00-rule-ownership-map）；
+- SKILL.md Phase 9 三行内联语法 + references/24 §13 "推荐"→"必须"
+  （`data-du-id`，唯一实质语义变更，用户已拍板）；
+- 执法两道（Delivery Gate，不新增生成侧 QA）：base 污染 → 注入器拒绝
+  + BLOCKED（PostProcess 从不清洗修复 base）；base 有 `data-du-id` 承载体
+  而 editable 模块为 0 → `module_capability_present` FAIL（静默能力丢失
+  哨兵，顺带修复了移植时的 `data-du` vs `data-du-id` 属性名漂移 bug——
+  该 bug 此前对真实报告零模块能力且无任何报错）。
+
+Huashu 影响评估：FREE 区（class/style/id/aria-*/自定义视觉语义）首次
+正式成文为保护区；MUST 属性渲染惰性、不进 CSS 计算，约束的是记账不是
+表达。Presentation deck 不进此契约。
+
+判别式沉淀：**改动是补丁还是修复，看它让下一次变更要碰的地方变多还是
+变少**——本变更净效果：新增 1 小模块 + 契约一节，删 4 处硬编码，接口
+演化从"改 4 处"变"改 1 处"。

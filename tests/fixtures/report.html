@@ -15,27 +15,27 @@
 </style>
 </head>
 <body>
-  <header data-du="DU001">
+  <header data-du-id="DU001">
     <h1>语义覆盖基线报告</h1>
     <p>DU001 · C001.F01 · 确定性交付链夹具</p>
   </header>
   <main>
-    <section data-du="DU002">
+    <section data-du-id="DU002" data-obligation-refs="C002.F01 C002.R01">
       <h2>1 内容链</h2>
       <p>事实 F01：基线夹具包含三个语义单元与一张源表。</p>
       <p>关系 R01：Raw Markdown → DIP → Report → Editable。</p>
       <p class="rv">动效语义承载：此段默认由 motion reveal 控制，编辑模式必须强制可见。</p>
     </section>
-    <section data-du="DU003">
+    <section data-du-id="DU003">
       <h2>2 源表</h2>
-      <table>
+      <table data-source-table-id="T01">
         <tr><th>Gate</th><th>期望</th></tr>
         <tr><td>base_sha_before == base_sha_after</td><td>TRUE</td></tr>
         <tr><td>structural equivalence after strip</td><td>TRUE</td></tr>
       </table>
     </section>
   </main>
-  <footer data-du="DU004">
+  <footer data-du-id="DU004">
     <p>DU004 · Generated fixture, not a real V2.9 artifact.</p>
   </footer>
 </body>

@@ -856,6 +856,18 @@ STEP 61 冻结 Generation Core：
 
 在 STEP 61 之前禁止读取 `postprocess/` 的实现细节，禁止为了下游编辑器修改 Huashu / DOM / CSS / Motion / Navigation / Responsive。
 
+STEP 58 保存 report.html 时遵守 Artifact Boundary（契约全文见 `postprocess/references/editor-contract.md` §Artifact Boundary）：
+
+```text
+必须写（语义承载体 section 级组件上）  data-du-id / data-obligation-refs / data-source-table-id
+自由区（Huashu 设计平面）            class / style / id / aria-* / 自定义视觉语义属性
+禁区（交付平面私有，base 必须为零）  data-edit-* / data-motion-reveal / data-he-* /
+                                    data-human-edit-* / human-edit-* / .he-* 前缀
+```
+
+知道"最终会有编辑器"不构成提前写编辑字段的理由——编辑字段全部由
+PostProcess 注入，模型在 Generation 阶段一个都不写。
+
 ---
 
 ## Phase 10 — Required Editable PostProcess

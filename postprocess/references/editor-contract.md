@@ -25,6 +25,36 @@ report-editable.html（base 的结构级派生副本 + 人工编辑运行时）
 Editor 不参与 Generation Plane。注入器不重排、不改写、不删除任何 base
 节点——只做"加属性 + 末尾追加"。
 
+## Artifact Boundary（report.html 接口契约）
+
+report.html 是 Generation 平面与 Delivery 平面的接口。接口语法的唯一
+定义源是 `postprocess/scripts/artifact_namespace.py`（机器可读）+ 本节
+（人读）；注入器与全部校验器均从该模块 import，**任何一侧都不再维护
+私有清单**。
+
+```text
+MUST（生成侧必须写，语义承载体上）
+  data-du-id / data-obligation-refs / data-source-table-id
+  （references/24 §13 定义；编辑器模块系统与 QA 锚点结构性依赖它）
+
+FREE（Huashu 设计平面自由区）
+  class / style / id / aria-* / 自定义视觉语义属性
+  PostProcess 永不读取、改写或剥离此区
+
+FORBIDDEN（交付平面私有 namespace，base 必须为零）
+  data-edit-* / data-motion-reveal / data-he-* / data-human-edit-*
+  id: he-editor-style / he-editor-script / human-edit-*
+  class 前缀: .he-*
+  它们只能由 PostProcess 注入，且干净导出时全部剥离
+```
+
+执法（全部在 Delivery Gate，不在生成侧新增 QA）：
+
+- base 出现任何 FORBIDDEN 项 → 注入器拒绝注入 + 校验 BLOCKED
+  （PostProcess 从不"清洗修复"base——发现污染即上报，修复责任在上游）；
+- base 存在 `data-du-id` 承载体但 editable 模块数为 0 → FAIL
+  （模块能力静默丢失哨兵，抓契约/注入器命名漂移）。
+
 ## Delivery Lifecycle
 
 ```text
@@ -43,8 +73,8 @@ DELIVERED（delivery_gate_status = PASS）
 
 | 标注 | 规则 |
 |---|---|
-| 文本元素 | `data-edit-id = <最近 data-du>.<tag>.<序号>`（如 `DU002.p.003`）。可编辑判定 = 排除**块级**子元素；V1.x 的"零子元素纯叶节点"限制废除——带行内标记（strong/a/span）的富段落照常可编辑。`span` 仅在无子元素且 ≤180 字符时可编辑 |
-| 模块 | 所有 `data-du` 承载体 → `data-edit-module-id`；默认 `data-edit-movable="false"` |
+| 文本元素 | `data-edit-id = <最近 data-du-id>.<tag>.<序号>`（如 `DU002.p.003`）。可编辑判定 = 排除**块级**子元素；V1.x 的"零子元素纯叶节点"限制废除——带行内标记（strong/a/span）的富段落照常可编辑。`span` 仅在无子元素且 ≤180 字符时可编辑 |
+| 模块 | 所有 `data-du-id` 承载体 → `data-edit-module-id`；默认 `data-edit-movable="false"` |
 | 权限 | `data-edit-authority`（human-editable / locked-fact / …）+ `data-edit-obligation-refs`（桥接 M3 obligation 追溯）。来源：可选 authority map，发现路径 `<output-root>/workspace/editable-authority-map.json` |
 | 动效可见性 | 扫 base CSS 检测 motion-reveal 隐藏类（rv/reveal/b-in 等）→ 元素标 `data-motion-reveal="true"`；编辑模式 CSS 强制全部可见 |
 

@@ -525,7 +525,7 @@ Prototype A / B / C 可改变设计表达，不能改变 Comparison Package 的 
 
 # 13、Final HTML / Slide 必须携带 Traceability Hook
 
-推荐最终组件写入：
+report.html 的语义承载体（section 级组件）必须写入：
 
 ```html
 <section
@@ -533,13 +533,29 @@ Prototype A / B / C 可改变设计表达，不能改变 Comparison Package 的 
   data-obligation-refs="C036.F01 C036.F02 C036.S01 C036.R02">
 ```
 
-Source Table 可额外保留：
+合并/拆分语义单元时：DU 拆进多个视觉步骤 → hook 写在共同容器上；
+多个 DU 融为一个视觉模块 → `data-obligation-refs` 多值引用。纯装饰元素
+（不承载 DU 的分隔线/背景/装饰图形）豁免。
+
+Presentation Slide 遵循 22 号完整性契约，不在此列。
+
+Source Table 必须保留：
 
 ```html
 data-source-table-id="T04"
 ```
 
-Traceability Hook 是 QA 定位辅助，不等于 Coverage Evidence 本身。
+命名空间纪律（Artifact Boundary）：生成侧只使用上述 MUST 属性；
+class / style / id / aria-* 与自定义视觉语义属性属于设计平面自由区；
+交付平面私有 namespace（`data-edit-*` / `data-motion-reveal` /
+`data-he-*` / `data-human-edit-*` / `human-edit-*` / `.he-*` 前缀）禁止
+出现在 report.html——它们只能由 PostProcess 注入（契约唯一源：
+`postprocess/scripts/artifact_namespace.py`，人读版
+`postprocess/references/editor-contract.md` §Artifact Boundary）。
+
+Traceability Hook 是 QA 定位辅助，不等于 Coverage Evidence 本身；但
+`data-du-id` 同时是下游编辑器模块系统与 Delivery Gate 哨兵的结构性依赖，
+缺失会被 `module_capability_present` 检查捕获。
 
 HTML 注释中的：
 

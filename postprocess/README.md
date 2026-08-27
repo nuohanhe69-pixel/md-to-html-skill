@@ -25,7 +25,7 @@ V1.x 在浏览器里运行时"盲发现"可编辑节点（只能编辑纯文本�
 `inject_editor.py` 完整解析 base DOM 并标注：
 
 - 富文本段落（含 strong/a/span 行内标记）可编辑；
-- 所有 `data-du` 模块可选中，可调排版（间距/宽度/布局/背景/边框），
+- 所有 `data-du-id` 模块可选中，可调排版（间距/宽度/布局/背景/边框），
   显式标记 `data-edit-movable` 的模块可调整顺序；
 - motion-reveal 隐藏元素标注 `data-motion-reveal`，编辑模式强制可见；
 - locked 内容经 Human Override 确认后可改，全部修改进内嵌台账
@@ -49,7 +49,7 @@ V1.x 在浏览器里运行时"盲发现"可编辑节点（只能编辑纯文本�
      "obligation_refs": ["C002.R01"]}
   ],
   "modules": [
-    {"selector": "section[data-du='DU003']", "movable": true}
+    {"selector": "section[data-du-id='DU003']", "movable": true}
   ]
 }
 ```

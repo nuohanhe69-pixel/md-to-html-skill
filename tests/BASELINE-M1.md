@@ -52,4 +52,14 @@
 
 ## M1-3 改动后复跑结果
 
-（M1-3 实施后填写）
+改动：`finalize_delivery.py` 在覆写可疑 editable 前写入 `editable_rebuilt_from_invalid` + `rebuild_reason`（成功重建后不清除）。
+
+| 断言 | happy | drift（重跑 Finalizer 后） |
+|---|---|---|
+| 全部 Gate（同上表） | ✅ 无回归 | ✅ 无回归 |
+| base SHA 全程不变 / strip==base | ✅ | ✅ |
+| **rebuild_reason 留痕** | —（无覆写，无留痕，符合预期） | ✅ `editable_rebuilt_from_invalid=true` + `rebuild_reason`（含缺失指纹明细） |
+
+前后对比：`drift_overwrite_trace_recorded` **false → true**，其余行为不变。
+
+> 结论：漂移覆写从静默变为可观测。全链路 LLM 漂移拦截仍依赖 Phase 11 Artifact Reality Check + M1-1 三条硬规则；本留痕提供事后审计证据。

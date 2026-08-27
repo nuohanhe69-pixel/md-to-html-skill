@@ -88,6 +88,27 @@ def main() -> int:
 
     ok, result = validate_existing(root, report)
     if not ok or a.force:
+        editable_path = root / 'editable' / 'report-editable.html'
+        if editable_path.exists() and not ok:
+            # Trace must be written BEFORE the dispatcher overwrites the suspicious
+            # artifact; these fields are intentionally not cleared on success so
+            # the drift evidence survives the deterministic rebuild.
+            missing = [
+                p.name for p in (
+                    root / 'editable' / 'editor-validation-result.json',
+                    root / 'editable' / 'postprocess-status.json',
+                ) if not p.exists()
+            ]
+            update_state(
+                root,
+                editable_rebuilt_from_invalid=True,
+                rebuild_reason=(
+                    'pre-existing editable failed delivery validation and was overwritten '
+                    'by deterministic rebuild (possible hand-written or stale editable); '
+                    'missing=' + (', '.join(missing) if missing else 'none')
+                    + '; validation=' + json.dumps(result, ensure_ascii=False)[:800]
+                ),
+            )
         here = Path(__file__).resolve().parent
         cmd = [
             sys.executable,

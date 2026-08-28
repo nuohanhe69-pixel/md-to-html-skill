@@ -60,7 +60,7 @@ def make_root(base: Path, name: str) -> Path:
 
 def run_finalizer(root: Path) -> dict:
     r = subprocess.run(
-        [sys.executable, str(FINALIZER), '--output-root', str(root), '--dispatch-mode', 'direct-fallback'],
+        [sys.executable, str(FINALIZER), '--output-root', str(root)],
         capture_output=True, text=True, timeout=180,
     )
     try:

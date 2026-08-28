@@ -14,7 +14,7 @@ final report.html + V2.9 QA complete
 ↓
 Artifact Boundary
 ↓
-fresh PostProcess Subagent（或 direct fallback）
+Main Agent 直接执行 Finalizer（主上下文 + 确定性脚本，单一执行路径）
 ↓
 inject_editor.py —— 编译期结构化标注
   parse base DOM → 标注可编辑元素/模块/动效/权限 → 追加运行时

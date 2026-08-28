@@ -878,13 +878,12 @@ PostProcess 注入，模型在 Generation 阶段一个都不写。
 
 ```text
 STEP 62 进入 POSTPROCESS_REQUIRED。
-        首选：平台真实暴露可调用的 fresh / isolated Subagent 时，让 Subagent 执行 Finalizer。
-        回退：否则 Main Agent 在 Generation 已冻结后直接执行同一 Finalizer。
+        Main Agent 在 Generation 已冻结后直接执行 Finalizer
+        （主上下文 + 确定性脚本，单一执行路径，无 subagent 派发）。
 
 STEP 63 唯一允许的最终化命令：
         python postprocess/scripts/finalize_delivery.py \
-          --output-root <absolute-output-root> \
-          --dispatch-mode <subagent|direct-fallback>
+          --output-root <absolute-output-root>
 
 STEP 64 检查 Finalizer Gate：
         - report.html exists

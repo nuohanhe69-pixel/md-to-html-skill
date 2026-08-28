@@ -57,7 +57,6 @@ def validate_existing(root: Path, report: Path) -> tuple[bool, dict]:
 def main() -> int:
     p = argparse.ArgumentParser(description='Required post-generation delivery finalizer')
     p.add_argument('--output-root', required=True)
-    p.add_argument('--dispatch-mode', choices=['subagent', 'direct-fallback'], default='direct-fallback')
     p.add_argument('--runtime-qa', choices=['auto', 'off', 'required'], default='auto')
     p.add_argument('--force', action='store_true', help='re-run dispatcher even if a valid editable artifact already exists')
     a = p.parse_args()
@@ -115,7 +114,6 @@ def main() -> int:
             str(here / 'dispatch_postprocess.py'),
             '--input', str(report),
             '--output-root', str(root),
-            '--dispatch-mode', a.dispatch_mode,
             '--runtime-qa', a.runtime_qa,
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -149,7 +147,6 @@ def main() -> int:
         postprocess_required=True,
         postprocess_extension_version='Editor Postprocess V2.0 Delivery Gate / Editor Runtime V2.0 (compile-time annotation)',
         postprocess_status=status,
-        postprocess_dispatch_mode=a.dispatch_mode,
         editable_output_path='editable/report-editable.html',
         editor_validation_result_path='editable/editor-validation-result.json',
         postprocess_status_path='editable/postprocess-status.json',

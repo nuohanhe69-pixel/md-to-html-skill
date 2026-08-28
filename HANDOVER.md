@@ -75,9 +75,9 @@ md-to-html-report-editorworkflow/
 │   ├── 01~33                      各规则域（最大 24 号 733 行）
 │   └── （最大文件：24/21/23/22/04，均 >600 行）
 └── postprocess/                   确定性交付子系统
-    ├── README.md / SUBAGENT.md    入口与 Worker 契约
+    ├── README.md                  入口与执行说明（Main Agent 直接执行 Finalizer，单一确定路径）
     ├── references/editor-contract.md  Editor 规则（62 行）
-    ├── scripts/                   finalize / dispatch / run / build_editable / validate_* 6 个脚本
+    ├── scripts/                   finalize / dispatch / run / validate_* 脚本
     └── editor/editor.css + editor.js（注入物）
 ```
 
@@ -175,11 +175,11 @@ md-to-html-report-editorworkflow/
 ### 方案 C｜Phase 10 硬化 + Subagent 隔离（治 P1 现象，止血优先）
 
 1. **SKILL.md 中 Phase 10 极简化并前置强化**，表述压缩为三条硬规则：
-   - 唯一合法动作 = 运行一条命令：`python postprocess/scripts/finalize_delivery.py --output-root <root> --dispatch-mode <subagent|direct-fallback>`；
+   - 唯一合法动作 = 运行一条命令：`python postprocess/scripts/finalize_delivery.py --output-root <root>`；
    - **禁止手写 / 重新生成 / "参考实现"任何 editable HTML**；
    - 交付前 `postprocess-status.json` 必须存在且 `delivery_gate_status=PASS`，否则一律 `INVALID_DELIVERED` 返回 Phase 10。
 2. **删除 SKILL.md 末尾的 Finalizer V1.2 附录**，压缩为 3 行指向 `postprocess/README.md`——消除四处维护同一规则（见方案 D）。
-3. **Subagent 隔离为主路径**：平台有可调用 fresh Subagent 时，PostProcess 一律交给 Subagent（`postprocess/SUBAGENT.md` 契约已写好）。fresh context 里**没有前 9 个 Phase 的"生成 HTML"惯性**，模式切换失败问题从根上消失。Main Agent 只做 direct-fallback。
+3. ~~Subagent 隔离为主路径~~ **【2026-08-28 已撤】**：经查证 `--dispatch-mode subagent` 从未产生任何行为分支（仅写标签），SUBAGENT.md 从未被执行路径读取——整套 subagent 层是未接线接口面板，已按"每条规则都该有真实执行路径"原则删除（见 §7.6）。当前交付架构 = Main Agent 主上下文 + 确定性脚本平面，单一执行路径。
 4. **反手写检测**：`validate_existing()` 已能识别"editable 存在但 status JSON 缺失/SHA 不匹配"，当前行为是重跑 dispatcher 覆写——保持该行为，并在 run-state 写入 `last_artifact_failure='hand-written editable detected, overwritten by deterministic build'`，让漂移留痕可观测。
 
 ### 方案 D｜四角色职责矩阵 + Editor 上"户口"（治 P3）
@@ -403,4 +403,52 @@ huashu-design 更新（如 critique-guide.md 路径/内容变化）本 skill 无
 无可编辑版）全部长在它不存在的交付平面上，归编辑器线修复（已完成）。
 V2.9 的剩余价值 = A/B 对照组（动效密度对比已使用一次，M2 验收仍需）
 + 回滚保险（main 分支 28ea89f）。勿改、勿同步、勿双线维护。
+
+**2026-08-28 补注**：huashu-design 当日上午被 TRAE 会话按 references/01
+依赖协议全新安装到 `~/.agents/skills/`（符号链接进 TRAE 技能注册表），
+从此存在两条加载路径（Skill 工具调用 + 文件级 Read）。新旧两版仅
+SKILL.md 有 59 行差异（32 份 references 逐字节一致）：新版定位升为
+"设计师工作室"六角色协作 + "one thousand no's"探索预算 + 30 天静默
+版本自检；核心哲学从"合格执行者"升到"对标顶级工作室"。references/01
+搜索顺序 `~/.agents` 优先于 `~/.codex`，后续运行自动用新版；旧版保留
+作 A/B 对照引擎。此前"不经 TRAE Skill 工具调用"的表述按此更新。
+
+### §7.5 M1 全链路审计实据（2026-08-28 追加）
+
+当晚真实运行（用户产出目录 6a903c62…）提供了 M1 有效性最硬证据：
+首次 Finalizer 被 motion Gate 拦截（MOTION_RUNTIME_FAILURE_CAN_HIDE_
+CONTENT，即"中间页面大面积隐藏"类问题被 Gate 抓获）→ PostProcess
+拒修 base（契约行为）→ 主上下文以 Huashu 身份重写 motion CSS → 重跑
+Finalizer 检测旧失败产物 → rebuild_reason 留痕 → 确定性重建 →
+PASS → DELIVERED。M1-1 硬规则 / M1-3 留痕 / motion Gate 三者在
+生产环境各司其职。注：首次命中是否为假阳性已无法考证（首版被覆盖），
+Gate 惯用语偏见已于 §7.2 修复，此处仅记录审计链完整性。
+
+### §7.6 Subagent 层删除决策（2026-08-28 追加，用户确认）
+
+**查证结论**：`--dispatch-mode subagent` 在 finalize_delivery.py 与
+dispatch_postprocess.py 中从未产生任何行为分支（仅作为标签写入
+run-state/analysis）；`postprocess/SUBAGENT.md` 从未被任何执行路径
+读取（其契约内容已被 editor-contract.md 全文覆盖）。整套 subagent 层
+是 M1 时代规划的隔离方案在 TRAE runtime 无此接口下的未完成迁移残留
+——违反"每条规则都该有真实执行路径"的治理原则，保留会误导接手人。
+
+**已删除**：SUBAGENT.md 文件、两个脚本的 --dispatch-mode 参数及
+run-state 的 postprocess_dispatch_mode 字段、README/ownership-map/
+HANDOVER 三处引用。基线同步重跑全绿。
+
+**保留记录**：若 M3 决定将 Huashu 抽为真子代理，届时按新契约新建
+（参考 §7.7 教训），不是恢复本次删除物。
+
+### §7.7 IM 版"工作记录与最终设计颠倒"的教训（2026-08-28 分析，未动我们代码）
+
+用户测试 im-report-only 时发现：其 Phase 4 ONE BEST 原型即完成设计
+→ Phase 5 锁定的 Hash 锚定完整原型 → Phase 5b 才写 HOW planning
+→ Phase 6 消费 locked design system 而非 planning。planning 从
+"设计输入"退化为"事后记录"。我们版本的三重结构性保护（Human Gate
+插在原型与锁定之间、快照与 planning 同 STEP 落盘、Phase 6 共同输入
+清单明文含 HOW Planning）使该颠倒结构性不可能。**教训：若未来把
+Huashu 抽成独立子代理，brief 必须携带 HOW planning 文件作为设计输入，
+否则会复刻 IM 版颠倒；fresh re-entry 的锚定物选择是关键设计变量。**
+im-report-only 的同步议题因此升级为强烈建议（仍待其 Owner 决策）。
 

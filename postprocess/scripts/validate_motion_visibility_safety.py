@@ -144,6 +144,26 @@ def classify_fallback_idioms(css: str, html_root: Node, js: str, hidden_classes:
     return {'idioms': idioms, 'covered': covered, 'uncovered': uncovered_rules}
 
 
+def motion_density(css: str, html_root: Node, js: str) -> dict:
+    """Observation-only metric. Never contributes to pass/fail — it exists so
+    repair loops can diff expressiveness before/after a fix (R3 of the repair
+    charter): deletions that flatten motion are visible instead of silent."""
+    density = {
+        'transition_rules': len(re.findall(r'transition\s*:', css, re.I)),
+        'transition_properties': len(re.findall(r'transition\s*:[^;]+', css, re.I)),
+        'keyframes_blocks': len(re.findall(r'@keyframes\b', css, re.I)),
+        'animation_declarations': len(re.findall(r'animation\s*:', css, re.I)),
+        'reveal_elements': sum(
+            1 for el in htmldom.iter_elements(html_root)
+            if any(_element_class_matches(el, cls) for cls in ('rv', 'reveal', 'b-in', 'fade', 'animate', 'motion'))
+        ),
+        'io_observers': len(re.findall(r'IntersectionObserver', js)),
+        'transform_declarations': len(re.findall(r'transform\s*:', css, re.I)),
+    }
+    density['total'] = sum(density.values())
+    return density
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument('--html', required=True, type=Path)
@@ -213,6 +233,11 @@ def main() -> int:
     evidence['data_motion_reveal_count'] = motion_ids
     if hidden_classes and motion_ids == 0:
         warnings.append('NO_DATA_MOTION_REVEAL_IDENTITY')
+
+    # R3 of the repair charter: expressiveness observation. Pure metric, no
+    # pass/fail influence — written into evidence so before/after a repair the
+    # diff is machine-readable in run-state via editor-validation-result.json.
+    evidence['motion_density'] = motion_density(css, root, js)
 
     if args.editable:
         has_editor_override = bool(re.search(

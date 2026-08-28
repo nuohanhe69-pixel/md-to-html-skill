@@ -917,6 +917,22 @@ current_status = POSTPROCESS_BLOCKED
 保留 Base Report 并报告 PostProcess Blocker
 ```
 
+修复章程（STEP 64 失败后进入修复循环时生效，三条元规则，只约束怎么修、不规定修成什么样）：
+
+```text
+R1 角色重入：失败属于 HOW 域（Motion / CSS / 视觉结构）时，动手前必须重读
+   huashu-design 相关文件（按 references/01 的定位路径）与
+   references/25、references/30 的边界节。修复时不是裸模型，仍戴着 Huashu 的帽子。
+
+R2 手术范围：只修 last_artifact_failure.failures.evidence 指向的结构；
+   evidence 之外的设计元素、动效、组件一律不得顺手简化或删除。
+   删动效不是修复 motion 兜底的最短路径——补安全证照才是。
+
+R3 表达力可观测：修复后重跑 Finalizer 前，对照 run-state 中
+   motion_density（修复前 / 修复后）计数；显著下降时在最终交付说明中
+   报告该差异，交由用户判断是否接受，不得静默吞掉。
+```
+
 完整 PostProcess 契约的唯一正文：
 
 ```text
